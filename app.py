@@ -193,11 +193,9 @@ _VRP_DISCOVERY = declare_discovery_extension(
 )
 
 # Pricing config — keyed by "METHOD /path", wildcards supported.
-x402_routes = {
-    # Path includes /api prefix because uvicorn runs with --root-path /api.
-    # The x402 middleware matches against the full path it receives, which
-    # already has the root_path applied.
-    "GET /api/v1/asset/*": RouteConfig(
+def _vrp_route(asset: str) -> RouteConfig:
+    """Build a per-asset RouteConfig with bazaar discovery extension."""
+    return RouteConfig(
         accepts=[
             PaymentOption(
                 scheme="exact",
@@ -208,13 +206,22 @@ x402_routes = {
         ],
         mime_type="application/json",
         description=(
-            "Volatility Risk Premium — DVOL minus Parkinson realized vol (72h) "
-            "for ETH or BTC. Positive = sell-vol opportunity, negative = "
-            "buy-vol. Response includes regime classification, raw inputs, "
-            "and open methodology URL for audit."
+            f"{asset} Volatility Risk Premium — DVOL minus Parkinson "
+            f"realized vol (72h). Positive = sell-vol opportunity, "
+            f"negative = buy-vol. Response includes regime classification "
+            f"(LOW/MID/HIGH), raw inputs for audit (DVOL, RV_72h, RV_6h, "
+            f"spot), timestamp, and open methodology URL."
         ),
         extensions=_VRP_DISCOVERY,
-    ),
+    )
+
+
+# Explicit per-asset routes so each gets its own Bazaar listing and the
+# resource URL maps cleanly to a static routeTemplate (no wildcards that
+# might confuse the validator's :var1 normalisation).
+x402_routes = {
+    "GET /api/v1/asset/eth/vrp": _vrp_route("ETH"),
+    "GET /api/v1/asset/btc/vrp": _vrp_route("BTC"),
 }
 app.add_middleware(PaymentMiddlewareASGI,
                     routes=x402_routes, server=x402_server)
