@@ -56,17 +56,16 @@ CDP_API_KEY_ID     = os.getenv("CDP_API_KEY_ID")
 CDP_API_KEY_SECRET = os.getenv("CDP_API_KEY_SECRET")
 
 if CDP_API_KEY_ID and CDP_API_KEY_SECRET:
-    EVM_NETWORK: Network = os.getenv("EVM_NETWORK", "eip155:8453")  # Base mainnet
-    # CDP facilitator base path is /platform/v2/x402 (no `/facilitator`
-    # suffix — that variant returns 404). Endpoints are /verify,
-    # /settle, /supported, /discovery/resources.
+    # CDP /supported lists both "base" (v1) and "eip155:8453" (v2). Use
+    # the v2 CAIP-2 form since the x402 SDK in this repo is on v2.
+    EVM_NETWORK: Network = os.getenv("EVM_NETWORK", "eip155:8453")
     FACILITATOR_URL = os.getenv(
         "FACILITATOR_URL",
         "https://api.cdp.coinbase.com/platform/v2/x402",
     )
     USE_CDP = True
 else:
-    EVM_NETWORK = os.getenv("EVM_NETWORK", "eip155:84532")  # Base Sepolia
+    EVM_NETWORK = os.getenv("EVM_NETWORK", "eip155:84532")  # Base Sepolia v2
     FACILITATOR_URL = os.getenv("FACILITATOR_URL", "https://x402.org/facilitator")
     USE_CDP = False
 
