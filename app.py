@@ -41,10 +41,14 @@ from x402.extensions.bazaar import (
 from x402.extensions.bazaar.resource_service import OutputConfig
 
 from dotenv import load_dotenv
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import signals
+from stats import StatsCounter
 
 load_dotenv("/opt/arms-signals/.env")  # absolute path so it loads under systemd
+
+stats = StatsCounter()
 
 METHODOLOGY_BASE = "https://regimeshift.xyz/methodology"
 
@@ -113,6 +117,34 @@ app.add_middleware(
     allow_methods=["GET", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+class _StatsMiddleware(BaseHTTPMiddleware):
+    """Increment per-(path, status) counters on every response."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        path = request.url.path or "/"
+        # Group by status family: 402 = preview, 200 = paid call, * = other
+        if response.status_code == 402:
+            bucket = "402"
+        elif 200 <= response.status_code < 300:
+            bucket = "200"
+        else:
+            bucket = "other"
+        stats.incr(f"{path}.{bucket}")
+        stats.incr(f"{path}.total")
+        stats.incr(f"_total.{bucket}")
+        stats.incr("_total.requests")
+        return response
+
+
+# NOTE: Stats middleware needs to be the OUTERMOST so it sees the final
+# response status — including 402s that x402's PaymentMiddlewareASGI
+# returns short-circuit. Starlette processes middleware last-added first,
+# so we register x402 paywall first, then stats on top.
+# (Look further down in this file for `app.add_middleware(_StatsMiddleware)`
+# placed AFTER the x402 setup.)
 
 # ─── x402 paywall ─────────────────────────────────────────────────────
 _fac_config_kwargs = {"url": FACILITATOR_URL}
@@ -225,6 +257,10 @@ x402_routes = {
 app.add_middleware(PaymentMiddlewareASGI,
                     routes=x402_routes, server=x402_server)
 
+# Stats wrapper sits OUTSIDE x402 so it sees the final status code
+# (402 short-circuits get counted as probes; 200 paid calls land here too).
+app.add_middleware(_StatsMiddleware)
+
 
 @app.get("/")
 def root():
@@ -251,6 +287,44 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok", "uptime_sec": int(time.time() - _STARTED)}
+
+
+@app.get("/stats")
+def stats_endpoint():
+    """Aggregate request counts (free, for the public dashboard).
+
+    Buckets per endpoint:
+      - .402   unpaid probe (also includes wallet-less curl checks)
+      - .200   successful paid call (CDP verify+settle landed)
+      - .other 4xx/5xx for that path
+      - .total all responses
+    """
+    snap = stats.snapshot()
+    return {
+        "started_unix":     snap["started"],
+        "uptime_sec":       snap["uptime_sec"],
+        "counts":           snap["counts"],
+        "endpoint_summary": _endpoint_summary(snap["counts"]),
+    }
+
+
+def _endpoint_summary(counts: dict[str, int]) -> dict:
+    """Roll up per-endpoint counts into a flat human-friendly summary."""
+    endpoints = ["/api/v1/asset/eth/vrp", "/api/v1/asset/btc/vrp",
+                  "/v1/asset/eth/vrp", "/v1/asset/btc/vrp"]
+    out = {}
+    seen = set()
+    for ep in endpoints:
+        if ep in seen: continue
+        seen.add(ep)
+        paid   = counts.get(f"{ep}.200",   0)
+        probes = counts.get(f"{ep}.402",   0)
+        other  = counts.get(f"{ep}.other", 0)
+        total  = counts.get(f"{ep}.total", 0)
+        if total > 0:
+            out[ep] = {"paid": paid, "probes": probes,
+                       "other": other, "total": total}
+    return out
 
 
 @app.get("/v1/asset/{asset}/vrp")
