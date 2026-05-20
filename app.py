@@ -31,6 +31,15 @@ from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.schemas import Network
 from x402.server import x402ResourceServer
 
+# Bazaar discovery extension — required for CDP Bazaar to catalog the
+# endpoint. Without it, the validator at agentic.market/validate rejects
+# the listing because the 402 envelope is missing extensions.bazaar.
+from x402.extensions.bazaar import (
+    bazaar_resource_server_extension,
+    declare_discovery_extension,
+)
+from x402.extensions.bazaar.resource_service import OutputConfig
+
 from dotenv import load_dotenv
 
 import signals
@@ -48,8 +57,12 @@ CDP_API_KEY_SECRET = os.getenv("CDP_API_KEY_SECRET")
 
 if CDP_API_KEY_ID and CDP_API_KEY_SECRET:
     EVM_NETWORK: Network = os.getenv("EVM_NETWORK", "eip155:8453")  # Base mainnet
+    # CDP facilitator base path is /platform/v2/x402 (no `/facilitator`
+    # suffix — that variant returns 404). Endpoints are /verify,
+    # /settle, /supported, /discovery/resources.
     FACILITATOR_URL = os.getenv(
-        "FACILITATOR_URL", "https://api.cdp.coinbase.com/platform/v2/x402"
+        "FACILITATOR_URL",
+        "https://api.cdp.coinbase.com/platform/v2/x402",
     )
     USE_CDP = True
 else:
@@ -68,7 +81,7 @@ def _cdp_create_headers() -> dict[str, dict[str, str]]:
     from cdp.auth.utils.http import generate_jwt
     from cdp.auth.utils.jwt import JwtOptions
     host = "api.cdp.coinbase.com"
-    base = "/platform/v2/x402"
+    base = "/platform/v2/x402"  # CDP facilitator base path
 
     def _hdr(method: str, path: str) -> dict[str, str]:
         jwt = generate_jwt(JwtOptions(
@@ -113,6 +126,72 @@ facilitator = HTTPFacilitatorClient(FacilitatorConfig(**_fac_config_kwargs))
 x402_server = x402ResourceServer(facilitator)
 x402_server.register(EVM_NETWORK, ExactEvmServerScheme())
 
+# Bazaar discovery — enriches each 402 with `extensions.bazaar.info` so the
+# CDP Bazaar indexer can catalog the endpoint. Without this the validator
+# at agentic.market/validate rejects the listing.
+x402_server.register_extension(bazaar_resource_server_extension)
+
+
+# ─── Sample output + JSON Schema used by Bazaar's discovery probe ────
+_VRP_SAMPLE_OUTPUT = {
+    "ok": True,
+    "asset": "ETH",
+    "vrp": 0.1525,
+    "regime": "MID",
+    "quiet": True,
+    "inputs": {
+        "dvol":      52.58,
+        "rv_72h":    52.4275,
+        "rv_6h":     40.204,
+        "spot_usd":  2130.2,
+        "timestamp": "2026-05-20T14:00:00+00:00",
+        "source":    "Deribit public API (DVOL + ETH-PERPETUAL OHLC)",
+    },
+    "methodology":  "https://regimeshift.xyz/methodology/vrp-v1",
+    "computed_at":  1779284275,
+    "cache_ttl_sec": 60,
+}
+
+_VRP_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok":     {"type": "boolean", "description": "Request status"},
+        "asset":  {"type": "string",  "enum": ["ETH", "BTC"]},
+        "vrp":    {"type": "number",  "description":
+                    "DVOL − Parkinson RV(72h), in vol points. "
+                    "Positive = sell-vol opportunity"},
+        "regime": {"type": "string",  "enum": ["LOW", "MID", "HIGH"]},
+        "quiet":  {"type": "boolean", "description": "true if RV_72h < 60%"},
+        "inputs": {
+            "type": "object",
+            "properties": {
+                "dvol":      {"type": "number", "description":
+                               "Deribit volatility index, annualized %"},
+                "rv_72h":    {"type": "number", "description":
+                               "Parkinson realized vol over 72h, %"},
+                "rv_6h":     {"type": "number", "description":
+                               "Parkinson realized vol over 6h, %"},
+                "spot_usd":  {"type": "number"},
+                "timestamp": {"type": "string", "format": "date-time"},
+                "source":    {"type": "string"},
+            },
+            "required": ["dvol", "rv_72h", "spot_usd", "timestamp"],
+        },
+        "methodology":   {"type": "string", "format": "uri"},
+        "computed_at":   {"type": "integer", "description": "Unix timestamp"},
+        "cache_ttl_sec": {"type": "integer"},
+    },
+    "required": ["ok", "asset", "vrp", "regime", "inputs"],
+}
+
+_VRP_DISCOVERY = declare_discovery_extension(
+    input={},  # GET with no query params; empty example keeps probe happy
+    output=OutputConfig(
+        example=_VRP_SAMPLE_OUTPUT,
+        schema=_VRP_OUTPUT_SCHEMA,
+    ),
+)
+
 # Pricing config — keyed by "METHOD /path", wildcards supported.
 x402_routes = {
     "GET /v1/asset/*": RouteConfig(
@@ -125,7 +204,13 @@ x402_routes = {
             ),
         ],
         mime_type="application/json",
-        description="VRP signal — DVOL − Parkinson RV(72h)",
+        description=(
+            "Volatility Risk Premium — DVOL minus Parkinson realized vol (72h) "
+            "for ETH or BTC. Positive = sell-vol opportunity, negative = "
+            "buy-vol. Response includes regime classification, raw inputs, "
+            "and open methodology URL for audit."
+        ),
+        extensions=_VRP_DISCOVERY,
     ),
 }
 app.add_middleware(PaymentMiddlewareASGI,
