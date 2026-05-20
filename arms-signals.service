@@ -9,7 +9,7 @@ User=dz
 Group=dz
 WorkingDirectory=/opt/arms-signals
 Environment="PATH=/opt/arms-signals/venv/bin:/usr/bin:/bin"
-ExecStart=/opt/arms-signals/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8090 --log-level info
+ExecStart=/opt/arms-signals/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8090 --log-level info --proxy-headers --forwarded-allow-ips=127.0.0.1 --root-path /api
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:/opt/arms-signals/server.log

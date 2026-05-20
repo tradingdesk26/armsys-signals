@@ -194,7 +194,10 @@ _VRP_DISCOVERY = declare_discovery_extension(
 
 # Pricing config — keyed by "METHOD /path", wildcards supported.
 x402_routes = {
-    "GET /v1/asset/*": RouteConfig(
+    # Path includes /api prefix because uvicorn runs with --root-path /api.
+    # The x402 middleware matches against the full path it receives, which
+    # already has the root_path applied.
+    "GET /api/v1/asset/*": RouteConfig(
         accepts=[
             PaymentOption(
                 scheme="exact",
