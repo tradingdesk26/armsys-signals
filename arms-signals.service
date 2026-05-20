@@ -1,0 +1,21 @@
+[Unit]
+Description=ARMS Signals API — paid derived market metrics for AI agents
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dz
+Group=dz
+WorkingDirectory=/opt/arms-signals
+Environment="PATH=/opt/arms-signals/venv/bin:/usr/bin:/bin"
+ExecStart=/opt/arms-signals/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8090 --log-level info
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/opt/arms-signals/server.log
+StandardError=append:/opt/arms-signals/server.log
+
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
