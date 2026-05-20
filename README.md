@@ -32,13 +32,13 @@ opportunity; negative = buy-vol opportunity.
 ## Payment
 
 - **Protocol**: [x402](https://www.x402.org/) v2 — HTTP 402 + signed USDC payments
-- **Network**: Base Sepolia (`eip155:84532`) for testnet trial
-- **Token**: USDC at `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+- **Network**: **Base mainnet** (`eip155:8453`)
+- **Token**: USDC at `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
 - **Pay to**: `0x82B17D0bb4De9ae6c3491257B60E8245e70acd7B`
-- **Facilitator**: `https://x402.org/facilitator` (default)
+- **Facilitator**: `https://api.cdp.coinbase.com/platform/v2/x402` (Coinbase CDP, JWT auth)
 
-When Coinbase opens a Base-mainnet facilitator, the network flag flips
-from Sepolia to mainnet and real USDC starts flowing.
+The server config falls back to Base Sepolia + the default `x402.org`
+facilitator if `CDP_API_KEY_ID` / `CDP_API_KEY_SECRET` aren't set.
 
 ## Try it
 

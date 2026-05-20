@@ -24,24 +24,68 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
+from x402.http.facilitator_client_base import CreateHeadersAuthProvider
 from x402.http.middleware.fastapi import PaymentMiddlewareASGI
 from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.schemas import Network
 from x402.server import x402ResourceServer
 
+from dotenv import load_dotenv
+
 import signals
 
+load_dotenv("/opt/arms-signals/.env")  # absolute path so it loads under systemd
 
 METHODOLOGY_BASE = "https://regimeshift.xyz/methodology"
 
-# x402 config — Base Sepolia testnet, testnet USDC.
-# Default x402.org facilitator only supports Sepolia for Base in 2026.
-# When Coinbase opens a mainnet facilitator, flip EVM_NETWORK to
-# "eip155:8453" + point FACILITATOR_URL at the mainnet endpoint.
-EVM_ADDRESS    = os.getenv("EVM_ADDRESS", "0x82B17D0bb4De9ae6c3491257B60E8245e70acd7B")
-EVM_NETWORK: Network = os.getenv("EVM_NETWORK", "eip155:84532")  # Base Sepolia
-FACILITATOR_URL = os.getenv("FACILITATOR_URL", "https://x402.org/facilitator")
+# x402 config. Mode is decided by presence of CDP_API_KEY_ID:
+#   - With CDP creds → Coinbase CDP facilitator on Base MAINNET (real USDC).
+#   - Without        → default x402.org facilitator on Base Sepolia (testnet).
+EVM_ADDRESS = os.getenv("EVM_ADDRESS", "0x82B17D0bb4De9ae6c3491257B60E8245e70acd7B")
+CDP_API_KEY_ID     = os.getenv("CDP_API_KEY_ID")
+CDP_API_KEY_SECRET = os.getenv("CDP_API_KEY_SECRET")
+
+if CDP_API_KEY_ID and CDP_API_KEY_SECRET:
+    EVM_NETWORK: Network = os.getenv("EVM_NETWORK", "eip155:8453")  # Base mainnet
+    FACILITATOR_URL = os.getenv(
+        "FACILITATOR_URL", "https://api.cdp.coinbase.com/platform/v2/x402"
+    )
+    USE_CDP = True
+else:
+    EVM_NETWORK = os.getenv("EVM_NETWORK", "eip155:84532")  # Base Sepolia
+    FACILITATOR_URL = os.getenv("FACILITATOR_URL", "https://x402.org/facilitator")
+    USE_CDP = False
+
+
+def _cdp_create_headers() -> dict[str, dict[str, str]]:
+    """Generate fresh CDP JWTs for each facilitator endpoint.
+
+    The CDP facilitator at api.cdp.coinbase.com/platform/v2/x402 expects
+    Bearer JWTs signed with the API key's Ed25519 secret, bound to the
+    HTTP method + host + path of the actual upstream call.
+    """
+    from cdp.auth.utils.http import generate_jwt
+    from cdp.auth.utils.jwt import JwtOptions
+    host = "api.cdp.coinbase.com"
+    base = "/platform/v2/x402"
+
+    def _hdr(method: str, path: str) -> dict[str, str]:
+        jwt = generate_jwt(JwtOptions(
+            api_key_id=CDP_API_KEY_ID,
+            api_key_secret=CDP_API_KEY_SECRET,
+            request_method=method,
+            request_host=host,
+            request_path=path,
+        ))
+        return {"Authorization": f"Bearer {jwt}"}
+
+    return {
+        "verify":    _hdr("POST", f"{base}/verify"),
+        "settle":    _hdr("POST", f"{base}/settle"),
+        "supported": _hdr("GET",  f"{base}/supported"),
+        "list":      _hdr("GET",  f"{base}/discovery/resources"),
+    }
 
 app = FastAPI(
     title="ARMS Signals API",
@@ -59,7 +103,13 @@ app.add_middleware(
 )
 
 # ─── x402 paywall ─────────────────────────────────────────────────────
-facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
+_fac_config_kwargs = {"url": FACILITATOR_URL}
+if USE_CDP:
+    _fac_config_kwargs["auth_provider"] = CreateHeadersAuthProvider(
+        _cdp_create_headers
+    )
+
+facilitator = HTTPFacilitatorClient(FacilitatorConfig(**_fac_config_kwargs))
 x402_server = x402ResourceServer(facilitator)
 x402_server.register(EVM_NETWORK, ExactEvmServerScheme())
 
