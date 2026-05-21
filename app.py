@@ -49,9 +49,42 @@ from stats import StatsCounter
 # Agent-SOFR oracle (multi-source rate + max-LTV + variance engine)
 from oracle.agent_sofr import compute_agent_sofr, compute_max_ltv_for_loan
 
+# Inter-Agent Clearinghouse: intent book, matcher, quote engine
+from matcher.intent_book import IntentBook
+from matcher.quote_engine import QuoteEngine
+from matcher.matcher import Matcher
+
 load_dotenv("/opt/arms-signals/.env")  # absolute path so it loads under systemd
 
 stats = StatsCounter()
+
+# Inter-Agent Clearinghouse singletons. Lazily initialized so the app can
+# start even if ORACLE_PRIVATE_KEY isn't set — only /v1/quote and /v1/intent/*
+# routes will fail in that case, the rate/risk endpoints still work.
+_intent_book: IntentBook | None = None
+_quote_engine: QuoteEngine | None = None
+_matcher: Matcher | None = None
+
+
+def _get_intent_book() -> IntentBook:
+    global _intent_book
+    if _intent_book is None:
+        _intent_book = IntentBook()
+    return _intent_book
+
+
+def _get_quote_engine() -> QuoteEngine:
+    global _quote_engine
+    if _quote_engine is None:
+        _quote_engine = QuoteEngine()  # reads ORACLE_PRIVATE_KEY from env
+    return _quote_engine
+
+
+def _get_matcher() -> Matcher:
+    global _matcher
+    if _matcher is None:
+        _matcher = Matcher(_get_intent_book(), _get_quote_engine())
+    return _matcher
 
 METHODOLOGY_BASE = "https://regimeshift.xyz/methodology"
 
@@ -394,12 +427,24 @@ def root():
         "service":   "ARMS Signals API",
         "version":   "0.1.0",
         "status":    "ok",
-        "endpoints": [
-            "/v1/asset/eth/vrp",
-            "/v1/asset/btc/vrp",
-            "/v1/rate/sofr/usd",
-            "/v1/risk/max-ltv",
-        ],
+        "endpoints": {
+            "data": [
+                "/v1/asset/eth/vrp",
+                "/v1/asset/btc/vrp",
+                "/v1/rate/sofr/usd",
+                "/v1/risk/max-ltv",
+            ],
+            "clearinghouse": [
+                "POST /v1/intent/lend",
+                "POST /v1/intent/borrow",
+                "GET /v1/intents/open",
+                "GET /v1/matches/recent",
+            ],
+        },
+        "contracts": {
+            "InterAgentRepo": "0xaea176DDa786c8B14802f92385749C7Cdf6C7400",
+            "chain": "Base mainnet (8453)",
+        },
         "dashboard": "https://regimeshift.xyz",
         "github":    "https://github.com/tradingdesk26",
         "x402": {
@@ -509,6 +554,108 @@ def get_max_ltv(
     }
     payload["computed_at"] = int(time.time())
     return JSONResponse(payload)
+
+
+# ─── Inter-Agent Clearinghouse endpoints (free; settlement on-chain) ──
+
+@app.post("/v1/intent/lend")
+async def post_intent_lend(payload: dict):
+    """
+    Submit a lender intent to the order book. Free (matching runs synchronously
+    on each new intent; matched quote payload available via /v1/matches/recent).
+    """
+    required = ["wallet", "asset", "amount", "max_duration_sec", "min_rate_bps"]
+    missing = [k for k in required if k not in payload]
+    if missing:
+        raise HTTPException(400, f"missing fields: {missing}")
+    intent = _get_intent_book().add_lender(payload)
+    # Run matcher synchronously
+    match = None
+    try:
+        match = _get_matcher().find_match()
+    except Exception:
+        pass
+    return JSONResponse({
+        "ok": True,
+        "intent_id": intent.intent_id,
+        "matched": match.match_id if match else None,
+    })
+
+
+@app.post("/v1/intent/borrow")
+async def post_intent_borrow(payload: dict):
+    """Submit a borrower intent. Returns match_id if compatible lender found."""
+    required = ["wallet", "principal_asset", "principal_amount",
+                "collateral_asset", "collateral_amount_max",
+                "duration_sec", "max_rate_bps"]
+    missing = [k for k in required if k not in payload]
+    if missing:
+        raise HTTPException(400, f"missing fields: {missing}")
+    intent = _get_intent_book().add_borrower(payload)
+    match = None
+    try:
+        match = _get_matcher().find_match()
+    except Exception:
+        pass
+    return JSONResponse({
+        "ok": True,
+        "intent_id": intent.intent_id,
+        "matched": match.match_id if match else None,
+    })
+
+
+@app.get("/v1/intents/open")
+def get_open_intents():
+    """Return all currently-open intents from both sides."""
+    book = _get_intent_book()
+    lenders = book.open_lenders()
+    borrowers = book.open_borrowers()
+    return {
+        "ok": True,
+        "lenders": [
+            {
+                "intent_id": l.intent_id, "wallet": l.wallet,
+                "asset": l.asset, "amount": l.amount,
+                "max_duration_sec": l.max_duration_sec,
+                "min_rate_bps": l.min_rate_bps,
+                "max_default_prob": l.max_default_prob,
+                "expires_at": l.expires_at,
+            } for l in lenders
+        ],
+        "borrowers": [
+            {
+                "intent_id": b.intent_id, "wallet": b.wallet,
+                "principal_asset": b.principal_asset,
+                "principal_amount": b.principal_amount,
+                "collateral_asset": b.collateral_asset,
+                "collateral_amount_max": b.collateral_amount_max,
+                "duration_sec": b.duration_sec,
+                "max_rate_bps": b.max_rate_bps,
+                "expires_at": b.expires_at,
+            } for b in borrowers
+        ],
+    }
+
+
+@app.get("/v1/matches/recent")
+def get_recent_matches(limit: int = 20):
+    """Recent matches with full quote payload (signature, decomposition, contract address)."""
+    import json as _json
+    matches = _get_intent_book().recent_matches(limit=limit)
+    out = []
+    for m in matches:
+        try:
+            quote = _json.loads(m["quote_payload"])
+        except Exception:
+            quote = None
+        out.append({
+            "match_id": m["match_id"],
+            "lender_intent_id": m["lender_intent_id"],
+            "borrower_intent_id": m["borrower_intent_id"],
+            "quote": quote,
+            "created_at": m["created_at"],
+        })
+    return {"ok": True, "matches": out}
 
 
 @app.get("/v1/asset/{asset}/vrp")

@@ -258,6 +258,21 @@ BASE_ASSETS: Final[dict[str, AssetMeta]] = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Deployed contracts on Base mainnet (chain_id 8453)
+# ─────────────────────────────────────────────────────────────────────────────
+
+BASE_CHAIN_ID: Final[int] = 8453
+
+# InterAgentRepo deployed 2026-05-21 via script/Deploy.s.sol
+# Deploy tx: 0xf2344c9cd8a90c9371d990cc8420bbf839ac14fb9fb099f8c5465f0354ba2698
+INTERAGENT_REPO_ADDRESS: Final[str] = "0xaea176DDa786c8B14802f92385749C7Cdf6C7400"
+
+# EIP-712 domain — must match the contract's _domainSeparatorV4()
+EIP712_DOMAIN_NAME: Final[str] = "InterAgentRepo"
+EIP712_DOMAIN_VERSION: Final[str] = "1"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # x402 endpoint pricing — USDC per request, on Base mainnet
 # ─────────────────────────────────────────────────────────────────────────────
 
