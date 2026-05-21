@@ -46,6 +46,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import signals
 from stats import StatsCounter
 
+# Agent-SOFR oracle (multi-source rate + max-LTV + variance engine)
+from oracle.agent_sofr import compute_agent_sofr, compute_max_ltv_for_loan
+
 load_dotenv("/opt/arms-signals/.env")  # absolute path so it loads under systemd
 
 stats = StatsCounter()
@@ -247,12 +250,135 @@ def _vrp_route(asset: str) -> RouteConfig:
     )
 
 
+# ─── Agent-SOFR Bazaar discovery samples ──────────────────────────────
+_SOFR_SAMPLE_OUTPUT = {
+    "ok": True,
+    "asset": "USD",
+    "horizon": "1h",
+    "horizon_sec": 3600,
+    "rate": 4.115,
+    "decomposition": {
+        "base_anchor": 4.115,
+        "variance_premium": 0.0,
+        "regime_adjustment": 0.0,
+    },
+    "regime": {"mode": "RESTING", "mode_index": 0},
+    "methodology": {
+        "version": "agent-sofr-v1",
+        "url": "https://regimeshift.xyz/methodology/agent-sofr-v1",
+    },
+    "computed_at": 1779380000,
+    "cache_ttl_sec": 60,
+}
+
+_SOFR_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok":     {"type": "boolean"},
+        "asset":  {"type": "string"},
+        "horizon": {"type": "string"},
+        "rate":   {"type": "number", "description":
+                    "Annualized agent-native short rate, %"},
+        "decomposition": {"type": "object"},
+        "regime": {"type": "object"},
+        "sources": {"type": "object"},
+        "methodology": {"type": "object"},
+        "computed_at": {"type": "integer"},
+    },
+    "required": ["ok", "asset", "rate", "decomposition"],
+}
+
+_SOFR_DISCOVERY = declare_discovery_extension(
+    input={},
+    output=OutputConfig(example=_SOFR_SAMPLE_OUTPUT, schema=_SOFR_OUTPUT_SCHEMA),
+)
+
+
+def _sofr_route(asset: str) -> RouteConfig:
+    return RouteConfig(
+        accepts=[
+            PaymentOption(
+                scheme="exact",
+                pay_to=EVM_ADDRESS,
+                price="$0.001",
+                network=EVM_NETWORK,
+            ),
+        ],
+        mime_type="application/json",
+        description=(
+            f"Agent-SOFR — decentralized {asset} short-rate benchmark for "
+            f"AI agents. Aggregates 8 market-derived + reference sources "
+            f"(Deribit PCP, HL funding, Aevo, Deribit basis, Aave V3, Compound, "
+            f"SOFR), takes weighted median, adds variance + regime premiums. "
+            f"6-mode regime classifier inherited from ARMSHookV3 production hook "
+            f"(730d ETH/USDT calibration, 210k bars). Methodology open + IPFS-pinned."
+        ),
+        extensions=_SOFR_DISCOVERY,
+    )
+
+
+# ─── Max-LTV Bazaar discovery sample ─────────────────────────────────
+_MAX_LTV_SAMPLE = {
+    "ok": True,
+    "max_ltv": 0.92,
+    "math_max_ltv": 0.97,
+    "regime_cap_ltv": 0.92,
+    "binding_constraint": "regime_cap",
+    "regime": "NORMAL",
+    "sigma_T": 0.0051,
+    "computed_at": 1779380000,
+}
+
+_MAX_LTV_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok":      {"type": "boolean"},
+        "max_ltv": {"type": "number"},
+        "math_max_ltv": {"type": "number"},
+        "regime_cap_ltv": {"type": "number"},
+        "binding_constraint": {"type": "string"},
+        "regime": {"type": "string"},
+        "sigma_T": {"type": "number"},
+    },
+    "required": ["ok", "max_ltv"],
+}
+
+_MAX_LTV_DISCOVERY = declare_discovery_extension(
+    input={},
+    output=OutputConfig(example=_MAX_LTV_SAMPLE, schema=_MAX_LTV_SCHEMA),
+)
+
+
+def _max_ltv_route() -> RouteConfig:
+    return RouteConfig(
+        accepts=[
+            PaymentOption(
+                scheme="exact",
+                pay_to=EVM_ADDRESS,
+                price="$0.001",
+                network=EVM_NETWORK,
+            ),
+        ],
+        mime_type="application/json",
+        description=(
+            "Maximum-safe LTV for collateralized agent loans. Computed from "
+            "(cv + λ·j²)-derived variance over loan horizon + 6-mode regime cap. "
+            "Lender-specifiable max_default_prob. Returns binding constraint "
+            "(math vs regime_cap) so agents can see WHY the cap is what it is. "
+            "Same calibrator as Agent-SOFR rate endpoint."
+        ),
+        extensions=_MAX_LTV_DISCOVERY,
+    )
+
+
 # Explicit per-asset routes so each gets its own Bazaar listing and the
 # resource URL maps cleanly to a static routeTemplate (no wildcards that
 # might confuse the validator's :var1 normalisation).
 x402_routes = {
-    "GET /api/v1/asset/eth/vrp": _vrp_route("ETH"),
-    "GET /api/v1/asset/btc/vrp": _vrp_route("BTC"),
+    "GET /api/v1/asset/eth/vrp":   _vrp_route("ETH"),
+    "GET /api/v1/asset/btc/vrp":   _vrp_route("BTC"),
+    "GET /api/v1/rate/sofr/usd":   _sofr_route("USD"),
+    "GET /api/v1/risk/max-ltv":    _max_ltv_route(),
 }
 app.add_middleware(PaymentMiddlewareASGI,
                     routes=x402_routes, server=x402_server)
@@ -271,6 +397,8 @@ def root():
         "endpoints": [
             "/v1/asset/eth/vrp",
             "/v1/asset/btc/vrp",
+            "/v1/rate/sofr/usd",
+            "/v1/risk/max-ltv",
         ],
         "dashboard": "https://regimeshift.xyz",
         "github":    "https://github.com/tradingdesk26",
@@ -311,7 +439,9 @@ def stats_endpoint():
 def _endpoint_summary(counts: dict[str, int]) -> dict:
     """Roll up per-endpoint counts into a flat human-friendly summary."""
     endpoints = ["/api/v1/asset/eth/vrp", "/api/v1/asset/btc/vrp",
-                  "/v1/asset/eth/vrp", "/v1/asset/btc/vrp"]
+                  "/api/v1/rate/sofr/usd", "/api/v1/risk/max-ltv",
+                  "/v1/asset/eth/vrp", "/v1/asset/btc/vrp",
+                  "/v1/rate/sofr/usd", "/v1/risk/max-ltv"]
     out = {}
     seen = set()
     for ep in endpoints:
@@ -325,6 +455,60 @@ def _endpoint_summary(counts: dict[str, int]) -> dict:
             out[ep] = {"paid": paid, "probes": probes,
                        "other": other, "total": total}
     return out
+
+
+@app.get("/v1/rate/sofr/usd")
+def get_agent_sofr_usd(horizon: str = "1h"):
+    """
+    Agent-SOFR — decentralized USD short-rate benchmark for AI agents.
+
+    Aggregates 8 sources via weighted median, adds variance + regime premiums.
+    Same calibrator (σ thresholds + λ=1.097) as our production Uniswap v4 hook.
+    """
+    horizon_map = {"1m": 60, "5m": 300, "30m": 1800, "1h": 3600,
+                    "4h": 14400, "24h": 86400}
+    horizon_sec = horizon_map.get(horizon, 3600)
+    try:
+        snap = compute_agent_sofr(asset="USD", horizon_sec=horizon_sec, use_cache=True)
+    except Exception as e:
+        raise HTTPException(status_code=503,
+                              detail=f"Agent-SOFR composition failed: {e}")
+    return JSONResponse(snap.to_dict())
+
+
+@app.get("/v1/risk/max-ltv")
+def get_max_ltv(
+    asset: str = "ETH",
+    duration_sec: int = 3600,
+    max_default_prob: float = 0.001,
+):
+    """
+    Max-safe LTV for collateralized agent loan.
+
+    Returns the smaller of:
+      (1) Math max from variance + lender's max_default_prob
+      (2) Regime hard cap (additional jump-risk protection)
+
+    binding_constraint field tells which one is active.
+    """
+    try:
+        result = compute_max_ltv_for_loan(
+            asset=asset.upper(),
+            duration_sec=duration_sec,
+            max_default_prob=max_default_prob,
+        )
+    except NotImplementedError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"max-LTV computation failed: {e}")
+    payload = result.to_dict()
+    payload["ok"] = True
+    payload["methodology"] = {
+        "version": "agent-sofr-v1",
+        "url": "https://regimeshift.xyz/methodology/agent-sofr-v1",
+    }
+    payload["computed_at"] = int(time.time())
+    return JSONResponse(payload)
 
 
 @app.get("/v1/asset/{asset}/vrp")
