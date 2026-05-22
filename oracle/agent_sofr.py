@@ -127,13 +127,24 @@ class AgentSOFRSnapshot:
                 "version": self.methodology_version,
                 "url": self.methodology_url,
                 "content_hash_sha256": self.methodology_content_hash_sha256,
-                "ipfs": self.methodology_ipfs_hash,
+                "ipfs_cid": self.methodology_ipfs_hash,
+                "ipfs_gateways": [
+                    f"https://ipfs.io/ipfs/{self.methodology_ipfs_hash}",
+                    f"https://dweb.link/ipfs/{self.methodology_ipfs_hash}",
+                    f"https://w3s.link/ipfs/{self.methodology_ipfs_hash}",
+                ] if self.methodology_ipfs_hash else [],
                 "calibration_source": self.calibration_source,
                 "calibration_data": self.calibration_data,
-                "verify": (
-                    f"curl {self.methodology_url} | shasum -a 256  "
-                    f"# should match content_hash_sha256 above"
-                ),
+                "verify": {
+                    "https": (
+                        f"curl {self.methodology_url} | shasum -a 256  "
+                        f"# should equal content_hash_sha256"
+                    ),
+                    "ipfs": (
+                        f"curl -H 'Accept: application/vnd.ipld.raw' "
+                        f"https://ipfs.io/ipfs/{self.methodology_ipfs_hash} | shasum -a 256"
+                    ) if self.methodology_ipfs_hash else None,
+                },
             },
             "computed_at": self.computed_at,
             "valid_until": self.valid_until,

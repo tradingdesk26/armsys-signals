@@ -38,11 +38,19 @@ CALIBRATION_DATA: Final[str] = (
     "source Binance public klines API via vol_calibration.py)"
 )
 
-# Bumped when any constant below changes.
-# IPFS CID populated post-pin (path B); SHA-256 below is the always-available
-# integrity hash (computed from the deployed HTML page, verified by HASHES.txt
-# served at https://regimeshift.xyz/methodology/HASHES.txt).
-METHODOLOGY_IPFS_HASH: Final[str] = ""  # populated post-pin
+# IPFS CID for agent-sofr-v1.html — pinned on our VM IPFS daemon + warmed
+# on public gateways (ipfs.io, dweb.link, w3s.link). Content-addressed so
+# the CID is mathematically tied to the file bytes; raw-mode fetch returns
+# exactly the SHA-256 below.
+#
+# Verify globally (any IPFS gateway, raw mode):
+#   curl -H 'Accept: application/vnd.ipld.raw' \
+#        https://ipfs.io/ipfs/bafkreigg73gsoybztijb4vb6qvuolh6aa7tnkumzgyo7mtfwq364r3qtp4 \
+#        | shasum -a 256
+#   (should match METHODOLOGY_CONTENT_HASH_SHA256 below)
+METHODOLOGY_IPFS_HASH: Final[str] = (
+    "bafkreigg73gsoybztijb4vb6qvuolh6aa7tnkumzgyo7mtfwq364r3qtp4"
+)
 
 # SHA-256 of the deployed methodology HTML page. Anyone can verify by:
 #   curl https://regimeshift.xyz/methodology/agent-sofr-v1 | shasum -a 256
