@@ -452,8 +452,10 @@ def root():
         "contracts": {
             "InterAgentRepoV1": "0xaea176DDa786c8B14802f92385749C7Cdf6C7400",
             "InterAgentRepoV2": "0x2bfE0f1142B04049d867389Bf91A84e498ED11E4",
-            "active": "V2",
+            "InterAgentRepoV3": "0xFfca5d80c3413Bd5D17971550cCD615f57f22945",
+            "active": "V3",
             "chain": "Base mainnet (8453)",
+            "audit_status": "round-1 fixes applied in V3 (all HIGH + LOW #8/#9 patched)",
         },
         "dashboard": "https://regimeshift.xyz",
         "github":    "https://github.com/tradingdesk26",

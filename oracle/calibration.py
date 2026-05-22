@@ -153,12 +153,15 @@ REGIME_PREMIUM_BPS: Final[dict[str, float]] = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 REGIME_MAX_LTV: Final[dict[str, float]] = {
-    "RESTING":  0.98,   # 2% buffer is enough in calm markets
-    "LOW":      0.96,
-    "NORMAL":   0.92,
-    "ELEVATED": 0.85,
-    "HIGH":     0.75,   # tighter than Aave's static 80% — safer in stress
-    "EXTREME":  0.60,   # or pause matching entirely (see MATCHING_PAUSE_REGIMES)
+    # Audit round-1 enforced 3% buffer below contract liquidation threshold
+    # (95% contract threshold − 2% origination buffer = 93% absolute cap;
+    # we set caps a further 1-2% below to give matching engine wiggle room).
+    "RESTING":  0.92,   # was 0.98 — still way more efficient than Aave 80%
+    "LOW":      0.90,   # was 0.96
+    "NORMAL":   0.85,   # was 0.92
+    "ELEVATED": 0.80,   # was 0.85 — matches Aave static cap
+    "HIGH":     0.70,   # was 0.75 — 10% safer than Aave in stress
+    "EXTREME":  0.55,   # was 0.60 — matching paused entirely in EXTREME anyway
 }
 
 # Regimes where matching is paused entirely (no quotes generated)
@@ -263,22 +266,37 @@ BASE_ASSETS: Final[dict[str, AssetMeta]] = {
 
 BASE_CHAIN_ID: Final[int] = 8453
 
-# InterAgentRepo V1 — deployed 2026-05-21 via script/Deploy.s.sol
-# Deploy tx: 0xf2344c9cd8a90c9371d990cc8420bbf839ac14fb9fb099f8c5465f0354ba2698
-# Status: kept live for MVP-pre-liquidation demonstration; new quotes signed for V2.
+# InterAgentRepo V1 — deployed 2026-05-21
+# Status: MVP-no-liquidation demonstration; not used for new quotes.
 INTERAGENT_REPO_V1_ADDRESS: Final[str] = "0xaea176DDa786c8B14802f92385749C7Cdf6C7400"
 
-# InterAgentRepo V2 — deployed 2026-05-22 via script/DeployV2.s.sol
-# Deploy tx: 0xad3fdca2013de1a995dd3bc5778d539d6e443feec07aaff149eb291b3e9bab0a
-# Adds Chainlink-based pre-expiry liquidation + bounty + insurance pool.
+# InterAgentRepo V2 — deployed 2026-05-22
+# Adds Chainlink-based pre-expiry liquidation. SUPERSEDED by V3 after
+# audit round-1 found 4 HIGH severity findings (see audit/round1.md).
 INTERAGENT_REPO_V2_ADDRESS: Final[str] = "0x2bfE0f1142B04049d867389Bf91A84e498ED11E4"
 
-# Active contract for new quotes (V2 has liquidation; quote engine signs for this)
-INTERAGENT_REPO_ADDRESS: Final[str] = INTERAGENT_REPO_V2_ADDRESS
+# InterAgentRepo V3 — deployed 2026-05-22 via script/DeployV3.s.sol
+# Deploy tx: 0x2ac8943ad54821ecdfe647da185cfe7e65c6812b512c54ddedbd7267ada186a7
+# Fixes all 4 HIGH findings from audit round-1:
+#   #1 originate validates initial LTV vs liquidation threshold + buffer
+#   #2 originate validates duration ≥ grace + 60s buffer
+#   #3 originate validates rateBps ≤ 100_000 (1000% APR ceiling)
+#   #4 defaultLoan uses Aave-style fair split (3% bounty / 1% insurance /
+#      debt-equiv to lender / excess back to borrower)
+# Plus LOW #8 (Chainlink answeredInRound) + #9 (OZ Pausable).
+INTERAGENT_REPO_V3_ADDRESS: Final[str] = "0xFfca5d80c3413Bd5D17971550cCD615f57f22945"
+
+# Active contract for new quotes — V3 is the production version
+INTERAGENT_REPO_ADDRESS: Final[str] = INTERAGENT_REPO_V3_ADDRESS
 
 # EIP-712 domain — must match the contract's _domainSeparatorV4()
 EIP712_DOMAIN_NAME: Final[str] = "InterAgentRepo"
-EIP712_DOMAIN_VERSION: Final[str] = "2"
+EIP712_DOMAIN_VERSION: Final[str] = "3"
+
+# V3 audit-driven new constants
+MIN_LTV_BUFFER_BPS: Final[int] = 200             # initial LTV must be < (95% - 2%) = 93%
+MIN_DURATION_BUFFER_SECONDS: Final[int] = 60     # duration must be > grace + 60s = 120s
+MAX_RATE_BPS: Final[int] = 100_000               # 1000% APR ceiling (sanity)
 
 # Chainlink price feeds on Base mainnet — read into V2 contract for liquidation
 CHAINLINK_ETH_USD_BASE: Final[str] = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70"

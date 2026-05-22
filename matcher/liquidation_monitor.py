@@ -21,10 +21,12 @@ from eth_abi import decode as abi_decode, encode as abi_encode
 from eth_utils import keccak
 
 from oracle.calibration import (
-    INTERAGENT_REPO_V2_ADDRESS, BASE_CHAIN_ID,
+    INTERAGENT_REPO_ADDRESS, BASE_CHAIN_ID,
     LIQUIDATION_LTV_BPS, LIQUIDATOR_BOUNTY_BPS, INSURANCE_FEE_BPS,
     CHAINLINK_ETH_USD_BASE,
 )
+# Alias for legacy code
+INTERAGENT_REPO_V2_ADDRESS = INTERAGENT_REPO_ADDRESS
 from matcher.intent_book import IntentBook
 
 
