@@ -31,11 +31,13 @@ from typing import Final
 
 METHODOLOGY_VERSION: Final[str] = "agent-sofr-v1"
 
-CALIBRATION_SOURCE: Final[str] = "arms/research/round25_calibration.csv"
+CALIBRATION_SOURCE: Final[str] = "arms/research/eth_jump_multihorizon.py"
 
 CALIBRATION_DATA: Final[str] = (
-    "210228 ETH/USDT 5-min bars (2024-04-26 → 2026-04-26, "
-    "source Binance public klines API via vol_calibration.py)"
+    "444219 5-min bars (~4.2 years) Binance ETH/USDC 1-second tickers "
+    "aggregated upward. Barndorff-Nielsen-Shephard jump decomposition: "
+    "BV (bipower variation) + TQ (tripower quarticity) -> Huang-Tauchen Z-statistic. "
+    "lambda identified closed-form (5% margin over total IL) -> 1.0968 -> rounded to 1.097."
 )
 
 # IPFS CID for agent-sofr-v1.html — pinned on our VM IPFS daemon + warmed
@@ -49,7 +51,7 @@ CALIBRATION_DATA: Final[str] = (
 #        | shasum -a 256
 #   (should match METHODOLOGY_CONTENT_HASH_SHA256 below)
 METHODOLOGY_IPFS_HASH: Final[str] = (
-    "bafkreigg73gsoybztijb4vb6qvuolh6aa7tnkumzgyo7mtfwq364r3qtp4"
+    "bafkreiaadxkhnrpbi5kwc4qargnr67y54stnkqcqy7vt6373hgemdimz7m"
 )
 
 # SHA-256 of the deployed methodology HTML page. Anyone can verify by:
@@ -57,7 +59,7 @@ METHODOLOGY_IPFS_HASH: Final[str] = (
 # Bump this constant whenever the page content changes (and bump the version
 # string too — agent-sofr-v1 → agent-sofr-v2 — so old hashes still resolve).
 METHODOLOGY_CONTENT_HASH_SHA256: Final[str] = (
-    "c6fecd2760399a121e543e8568e59fc007e6d55199361df64cb686fdc8ee137f"
+    "001dd476c5e14755617200899b1f7f1de4a6d54050c7eb3f6ffb3988c1a199fb"
 )
 
 
