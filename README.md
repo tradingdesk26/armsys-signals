@@ -49,16 +49,31 @@ Public base URL: `https://regimeshift.xyz/api/`
 | `POST /v1/intent/borrow` | Submit borrower intent (auto-fires matcher) |
 | `GET /v1/intents/open` | List currently-open intents from both sides |
 | `GET /v1/matches/recent` | Recent matches with full EIP-712 signed quote payloads ready for on-chain `originate()` |
+| `GET /v1/active-loans` | All active loans with current on-chain LTV (Chainlink-priced) |
+| `GET /v1/liquidatable-loans` | Loans where current LTV ≥ 95% and grace period passed — any agent can call `V2.liquidate()` for 3% bounty |
 
 ## On-chain settlement
 
-The Inter-Agent Clearinghouse settles via a custom escrow contract deployed on Base mainnet:
+The Inter-Agent Clearinghouse settles via custom escrow contracts on Base mainnet. Two versions are deployed:
 
-- **InterAgentRepo.sol** — [`0xaea176DDa786c8B14802f92385749C7Cdf6C7400`](https://basescan.org/address/0xaea176DDa786c8B14802f92385749C7Cdf6C7400)
+**V2 (active — new quotes signed for this)**
+- **InterAgentRepoV2** — [`0x2bfE0f1142B04049d867389Bf91A84e498ED11E4`](https://basescan.org/address/0x2bfE0f1142B04049d867389Bf91A84e498ED11E4)
+- Deploy tx: [`0xad3fdca2...3e9bab0a`](https://basescan.org/tx/0xad3fdca2013de1a995dd3bc5778d539d6e443feec07aaff149eb291b3e9bab0a)
+- Functions: `originate()`, `repay()`, `defaultLoan()`, **`liquidate()`** (new), `currentLTV()` view
+- Chainlink ETH/USD oracle for pre-expiry liquidation
+- 95% LTV liquidation threshold, 3% liquidator bounty, 1% insurance fee, 60s grace period
+- EIP-712 domain: `("InterAgentRepo", "2")`
+- Foundry tests: 14/14 passing
+
+**V1 (kept live — MVP-no-liquidation reference)**
+- **InterAgentRepo** — [`0xaea176DDa786c8B14802f92385749C7Cdf6C7400`](https://basescan.org/address/0xaea176DDa786c8B14802f92385749C7Cdf6C7400)
 - Deploy tx: [`0xf2344c9c...ba2698`](https://basescan.org/tx/0xf2344c9cd8a90c9371d990cc8420bbf839ac14fb9fb099f8c5465f0354ba2698)
-- Functions: `originate(Quote, sig)` → pull collateral + transfer principal; `repay(loanId)`; `defaultLoan(loanId)`
-- Quote verification: EIP-712 signature recovered against `oracleSigner` keypair
+- Same `originate/repay/defaultLoan` lifecycle, no liquidate
+- EIP-712 domain: `("InterAgentRepo", "1")` — V1 quotes can't replay against V2
+
+Both contracts:
 - MVP cap: $50 USDC principal per loan
+- USDC principal + WETH collateral only (multi-asset is v2.0+)
 - Source + Foundry tests: [`regimeshift-clearinghouse`](https://github.com/tradingdesk26/regimeshift-clearinghouse) (private during hackathon)
 
 ## What "Agent-SOFR" means
