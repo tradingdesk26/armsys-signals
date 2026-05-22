@@ -452,11 +452,11 @@ def root():
         "contracts": {
             "InterAgentRepoV1": "0xaea176DDa786c8B14802f92385749C7Cdf6C7400 (MVP demo)",
             "InterAgentRepoV2": "0x2bfE0f1142B04049d867389Bf91A84e498ED11E4 (RETIRED — oracleSigner=0x...dEaD)",
-            "InterAgentRepoV3": "0xFfca5d80c3413Bd5D17971550cCD615f57f22945 (audit R1 patched, superseded)",
+            "InterAgentRepoV3": "0xFfca5d80c3413Bd5D17971550cCD615f57f22945 (RETIRED per R3-#1 — oracleSigner=0x...dEaD)",
             "InterAgentRepoV4": "0x9d3b61d13a839968ffad94a0eedf73153c2fb31c",
             "active": "V4",
             "chain": "Base mainnet (8453)",
-            "audit_status": "rounds 1 + 2 fully patched in V4 (HIGH 1-4 + LOW 8-9 + MED R2-#2 + V2 retired)",
+            "audit_status": "rounds 1 + 2 + 3 fully addressed: V4 active, V3 + V2 retired (oracleSigner=0x...dEaD). Trajectory: 10 → 3 → 1 findings.",
         },
         "dashboard": "https://regimeshift.xyz",
         "github":    "https://github.com/tradingdesk26",

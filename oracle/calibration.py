@@ -276,7 +276,10 @@ INTERAGENT_REPO_V2_ADDRESS: Final[str] = "0x2bfE0f1142B04049d867389Bf91A84e498ED
 
 # InterAgentRepo V3 — deployed 2026-05-22. Audit round-1 patched.
 # Deploy tx: 0x2ac8943ad54821ecdfe647da185cfe7e65c6812b512c54ddedbd7267ada186a7
-# Superseded by V4 after audit round-2 found R2-#2 (pause-to-default DOS).
+# RETIRED 2026-05-22 via setOracleSigner(0x...dEaD) — tx 0xc1ef9456a6adec7eec739d2bdbc73b9f81a48e35e37fb3b1cfb0eba05e67292d
+# Per audit R3-#1 (same doctrine as R2-#3 retired V2). New originations on V3
+# always revert. V3 bytecode contained R2-#2 (pause-to-default DOS); now
+# defense-in-depth blocked via on-chain oracle rotation.
 INTERAGENT_REPO_V3_ADDRESS: Final[str] = "0xFfca5d80c3413Bd5D17971550cCD615f57f22945"
 
 # InterAgentRepo V4 — deployed 2026-05-22 via script/DeployV4.s.sol
