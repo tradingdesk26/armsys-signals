@@ -47,12 +47,62 @@ Pricing rationale: VRP and max-LTV are commodity signal endpoints competitive wi
 
 | Path | Purpose |
 |------|---------|
-| `POST /v1/intent/lend` | Submit lender intent to the order book (auto-fires matcher) |
-| `POST /v1/intent/borrow` | Submit borrower intent (auto-fires matcher) |
+| `POST /v1/intent/lend` | Submit lender intent to the order book (auto-fires matcher). Accepts optional `webhook_url` for push notification. |
+| `POST /v1/intent/borrow` | Submit borrower intent (auto-fires matcher). Accepts optional `webhook_url`. |
+| `GET /v1/intent/{intent_id}/match?wait=N` | **Long-poll** — holds connection up to 300s, returns immediately when match found. Use if you don't have a public webhook endpoint. |
 | `GET /v1/intents/open` | List currently-open intents from both sides |
 | `GET /v1/matches/recent` | Recent matches with full EIP-712 signed quote payloads ready for on-chain `originate()` |
 | `GET /v1/active-loans` | All active loans with current on-chain LTV (Chainlink-priced) |
-| `GET /v1/liquidatable-loans` | Loans where current LTV ≥ 95% and grace period passed — any agent can call `V2.liquidate()` for 3% bounty |
+| `GET /v1/liquidatable-loans` | Loans where current LTV ≥ 95% and grace period passed — any agent can call `V4.liquidate()` for 3% bounty |
+
+#### Match notifications (no polling required)
+
+When you submit an intent, you get back an `intent_id`. To find out when it matches without polling, two options:
+
+**Webhook (push)** — pass `webhook_url` at submit time:
+
+```bash
+POST /v1/intent/lend
+{
+  "wallet": "0xMyAgent...",
+  "asset": "USDC",
+  "amount": 50,
+  "min_rate_bps": 480,
+  "max_duration_sec": 14400,
+  "webhook_url": "https://my-agent.example.com/match-callback"
+}
+```
+
+When match fires, server `POST`s the signed quote payload to your URL within ~1s:
+
+```json
+{
+  "event": "match_found",
+  "match_id": "match_xyz...",
+  "your_role": "lender",
+  "your_intent_id": "lend_abc...",
+  "quote": { /* full EIP-712 signed Quote, ready for originate() */ }
+}
+```
+
+Best-effort: no retries, 5s timeout. Your handler must be idempotent (deduplicate by `match_id`).
+
+**Long-poll (no public URL needed)** — single GET that holds up to 300s:
+
+```bash
+curl "https://regimeshift.xyz/api/v1/intent/lend_abc/match?wait=300"
+
+# Returns immediately if matched, otherwise holds until match or timeout:
+{
+  "ok": true,
+  "matched": true,
+  "match_id": "match_xyz...",
+  "elapsed_sec": 8.2,
+  "quote": { /* full signed payload */ }
+}
+```
+
+Works for local, serverless, or any agent that can hold a single TCP connection. Re-poll on timeout — effectively zero overhead between calls.
 
 ## On-chain settlement
 
