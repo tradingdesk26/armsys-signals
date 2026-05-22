@@ -448,6 +448,7 @@ def root():
                 "GET /v1/matches/recent",
                 "GET /v1/active-loans",
                 "GET /v1/liquidatable-loans",
+                "GET /v1/loans/registry         (on-chain V4 event scan — full loan lifecycle with tx hashes)",
             ],
         },
         "contracts": {
@@ -661,7 +662,7 @@ def get_liquidatable_loans():
     """
     Return all currently-active loans whose on-chain LTV ≥ 95% (liquidation
     threshold) AND grace period has passed. Any agent can call
-    InterAgentRepoV2.liquidate(loanId) to claim the 3% bounty.
+    InterAgentRepoV4.liquidate(loanId) to claim the 3% bounty.
 
     Read-only — does NOT execute liquidations. Free endpoint (encourages
     monitoring + competition between liquidators).
@@ -670,7 +671,7 @@ def get_liquidatable_loans():
         loans = scan_liquidatable_loans(_get_intent_book(), limit=100)
         return {
             "ok": True,
-            "contract": "0x2bfE0f1142B04049d867389Bf91A84e498ED11E4",
+            "contract": "0x9d3b61d13a839968ffad94a0eedf73153c2fb31c",
             "chain_id": 8453,
             "liquidation_ltv_threshold_bps": 9500,
             "liquidator_bounty_bps": 300,
@@ -691,12 +692,40 @@ def get_active_loans():
         loans = scan_all_active_loans(_get_intent_book(), limit=100)
         return {
             "ok": True,
-            "contract": "0x2bfE0f1142B04049d867389Bf91A84e498ED11E4",
+            "contract": "0x9d3b61d13a839968ffad94a0eedf73153c2fb31c",
             "chain_id": 8453,
             "loans": [loan.to_dict() for loan in loans],
         }
     except Exception as e:
         raise HTTPException(503, f"active loans scan failed: {e}")
+
+
+@app.get("/v1/loans/registry")
+def get_loan_registry(limit: int = 50):
+    """
+    Full lifecycle of every V4 loan reconstructed from on-chain event logs.
+
+    Returns the last `limit` originated loans (within ~14h lookback), each
+    enriched with its close-event tx hash + final status. Cached for 30s.
+
+    Each record contains: loan_id, status (active/repaid/defaulted/liquidated),
+    borrower, lender, principal, collateral, rate, LTV, regime data (via match),
+    and on-chain tx hashes (originate + close).
+
+    Useful for public transparency dashboards.
+    """
+    try:
+        from oracle.loan_history import build_loan_registry
+        loans = build_loan_registry(limit=min(max(limit, 1), 100))
+        return {
+            "ok": True,
+            "contract": "0x9d3b61d13a839968ffad94a0eedf73153c2fb31c",
+            "chain_id": 8453,
+            "count": len(loans),
+            "loans": loans,
+        }
+    except Exception as e:
+        raise HTTPException(503, f"loan registry build failed: {e}")
 
 
 @app.get("/v1/intent/{intent_id}/match")

@@ -106,32 +106,36 @@ Works for local, serverless, or any agent that can hold a single TCP connection.
 
 ## On-chain settlement
 
-The Inter-Agent Clearinghouse settles via custom escrow contracts on Base mainnet. Two versions are deployed:
+The Inter-Agent Clearinghouse settles via custom escrow contracts on Base mainnet. Three audit rounds completed (10 → 3 → 1 → 0 findings); current production contract is V4.
 
-**V2 (active — new quotes signed for this)**
-- **InterAgentRepoV2** — [`0x2bfE0f1142B04049d867389Bf91A84e498ED11E4`](https://basescan.org/address/0x2bfE0f1142B04049d867389Bf91A84e498ED11E4)
-- Deploy tx: [`0xad3fdca2...3e9bab0a`](https://basescan.org/tx/0xad3fdca2013de1a995dd3bc5778d539d6e443feec07aaff149eb291b3e9bab0a)
-- Functions: `originate()`, `repay()`, `defaultLoan()`, **`liquidate()`** (new), `currentLTV()` view
+**V4 (active — new quotes signed for this)**
+- **InterAgentRepoV4** — [`0x9d3b61d13a839968ffad94a0eedf73153c2fb31c`](https://basescan.org/address/0x9d3b61d13a839968ffad94a0eedf73153c2fb31c)
+- Functions: `originate()`, `repay()`, `defaultLoan()`, `liquidate()`, `currentLTV()` view
 - Chainlink ETH/USD oracle for pre-expiry liquidation
 - 95% LTV liquidation threshold, 3% liquidator bounty, 1% insurance fee, 60s grace period
-- EIP-712 domain: `("InterAgentRepo", "2")`
-- Foundry tests: 14/14 passing
+- Aave-style default split: 3% bounty / 1% insurance / debt-equivalent to lender / excess refund to borrower
+- Min loan duration: 120s; initial-LTV cap: 93% (enforced on-chain at origination)
+- `whenNotPaused` removed from `repay()` (R2-#2) — owner cannot force borrower into default
+- EIP-712 domain: `("InterAgentRepo", "4")`
+- Foundry tests: passing under `via_ir`
 
-**V1 (kept live — MVP-no-liquidation reference)**
-- **InterAgentRepo** — [`0xaea176DDa786c8B14802f92385749C7Cdf6C7400`](https://basescan.org/address/0xaea176DDa786c8B14802f92385749C7Cdf6C7400)
-- Deploy tx: [`0xf2344c9c...ba2698`](https://basescan.org/tx/0xf2344c9cd8a90c9371d990cc8420bbf839ac14fb9fb099f8c5465f0354ba2698)
-- Same `originate/repay/defaultLoan` lifecycle, no liquidate
-- EIP-712 domain: `("InterAgentRepo", "1")` — V1 quotes can't replay against V2
+**Retired contracts (oracleSigner rotated to `0x...dEaD`)**
+- **InterAgentRepoV3** — [`0xFfca5d80c3413Bd5D17971550cCD615f57f22945`](https://basescan.org/address/0xFfca5d80c3413Bd5D17971550cCD615f57f22945) — retired after R3 cleanup
+- **InterAgentRepoV2** — [`0x2bfE0f1142B04049d867389Bf91A84e498ED11E4`](https://basescan.org/address/0x2bfE0f1142B04049d867389Bf91A84e498ED11E4) — retired after R2
+- **InterAgentRepo** (V1) — [`0xaea176DDa786c8B14802f92385749C7Cdf6C7400`](https://basescan.org/address/0xaea176DDa786c8B14802f92385749C7Cdf6C7400) — MVP no-liquidation reference
 
-Both contracts:
-- MVP cap: $50 USDC principal per loan
+All retired contracts have `oracleSigner = 0x...dEaD`, so no new quotes can be signed for them.
+
+V4:
 - USDC principal + WETH collateral only (multi-asset is v2.0+)
 - Source + Foundry tests: [`regimeshift-clearinghouse`](https://github.com/tradingdesk26/regimeshift-clearinghouse) (private during hackathon)
+- Audit reports: `audit/round1.md`, `audit/round2.md`, `audit/round3.md`
 
 ## What "Agent-SOFR" means
 
 A decentralized benchmark rate for the agent economy — the LIBOR/SOFR of
-machines. Refreshed every 60s, aggregated from 8 sources:
+machines. Refreshed every 60s, aggregated from 7 sources via weighted median
+(WETH borrow source removed in v1.0.1 — see note below):
 
 | Source | Weight | Notes |
 |--------|--------|-------|
