@@ -135,14 +135,15 @@ machines. Refreshed every 60s, aggregated from 8 sources:
 
 | Source | Weight | Notes |
 |--------|--------|-------|
-| Deribit ETH options PCP (30d) | 30% | Put-call parity → implied USD rate |
-| Hyperliquid ETH-PERP funding | 20% | Annualized 1h funding rate |
-| Aevo ETH options PCP | 10% | Cross-check on options markets |
+| Deribit ETH options PCP (30d) | 32% | Put-call parity → implied USD rate |
+| Hyperliquid ETH-PERP funding | 22% | Annualized 1h funding rate |
+| Aevo ETH options PCP | 11% | Cross-check on options markets |
 | Deribit ETH futures basis (3m) | 10% | Cost-of-carry sanity check |
 | Aave V3 Base USDC borrow | 10% | DeFi reference (capped — governance-set) |
-| Aave V3 Base WETH borrow | 5% | Same |
 | Compound Base USDC | 5% | TODO — not yet implemented |
 | NY Fed SOFR 30d | 10% | TradFi macro anchor |
+
+Note: WETH borrow rate **deliberately excluded** — it's the ETH lending market (interest paid in ETH), structurally unrelated to USDC short rate. We compute the rate at which agents borrow USD against ETH collateral, not the rate at which someone borrows ETH itself.
 
 Total rate = `weighted_median(sources) + variance_premium + regime_adjustment`
 

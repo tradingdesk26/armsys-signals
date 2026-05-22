@@ -179,16 +179,17 @@ MATCHING_PAUSE_REGIMES: Final[frozenset[str]] = frozenset({"EXTREME"})
 # ─────────────────────────────────────────────────────────────────────────────
 
 SOURCE_WEIGHTS: Final[dict[str, float]] = {
-    # Market-derived (70%)
-    "deribit_pcp_30d":       0.30,  # Deepest options market — hardest to manipulate
-    "hl_funding_smoothed":   0.20,  # Largest perp venue — demand signal
-    "aevo_pcp":              0.10,  # Cross-check on options markets
+    # Market-derived (75%) — implied USD rates from crypto venues
+    "deribit_pcp_30d":       0.32,  # Deepest options market — hardest to manipulate
+    "hl_funding_smoothed":   0.22,  # Largest perp venue — demand signal
+    "aevo_pcp":              0.11,  # Cross-check on options markets
     "deribit_basis_3m":      0.10,  # Futures cost-of-carry sanity check
 
-    # Reference-only (20%) — governance-set, so capped influence
+    # Reference-only (15%) — governance-set USDC lending, capped influence
+    # NOTE: aave_borrow_weth removed in v1.0.1 — it's the WETH lending market
+    # (interest paid in ETH), structurally unrelated to USDC short rate.
     "aave_borrow_usdc":      0.10,
     "compound_borrow_usdc":  0.05,
-    "aave_borrow_weth":      0.05,
 
     # Macro anchor (10%) — prevents detachment from real-economy USD rate
     "sofr_30d":              0.10,

@@ -520,13 +520,15 @@ def aggregate_rates(
         if now - cached_ts < CACHE_TTL_SEC:
             return cached
 
+    # NOTE: aave_borrow_weth deliberately excluded — that's the WETH lending
+    # market (interest paid in ETH), structurally separate from USDC short rate.
+    # Kept as standalone fetch function for cross-asset references in future v2.0.
     sources = {
         "deribit_pcp_30d":      fetch_deribit_pcp_30d(eth_staking_yield_pct),
         "hl_funding_smoothed":  fetch_hl_funding_smoothed(),
         "aevo_pcp":             fetch_aevo_pcp(eth_staking_yield_pct),
         "deribit_basis_3m":     fetch_deribit_basis_3m(eth_staking_yield_pct),
         "aave_borrow_usdc":     fetch_aave_borrow_usdc(),
-        "aave_borrow_weth":     fetch_aave_borrow_weth(),
         "compound_borrow_usdc": fetch_compound_borrow_usdc(),
         "sofr_30d":             fetch_sofr_30d(),
     }
