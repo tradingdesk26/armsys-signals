@@ -266,32 +266,33 @@ BASE_ASSETS: Final[dict[str, AssetMeta]] = {
 
 BASE_CHAIN_ID: Final[int] = 8453
 
-# InterAgentRepo V1 — deployed 2026-05-21
-# Status: MVP-no-liquidation demonstration; not used for new quotes.
+# InterAgentRepo V1 — deployed 2026-05-21. MVP-no-liquidation demonstration.
 INTERAGENT_REPO_V1_ADDRESS: Final[str] = "0xaea176DDa786c8B14802f92385749C7Cdf6C7400"
 
-# InterAgentRepo V2 — deployed 2026-05-22
-# Adds Chainlink-based pre-expiry liquidation. SUPERSEDED by V3 after
-# audit round-1 found 4 HIGH severity findings (see audit/round1.md).
+# InterAgentRepo V2 — deployed 2026-05-22. Chainlink liquidation.
+# RETIRED 2026-05-22 via setOracleSigner(0x...dEaD) — tx 0x889a460824d949a119d37c53e14163db12998f640dd75b4a51e3c9e5809b37ba
+# Per audit R2-#3. New originations on V2 always revert (no valid signer).
 INTERAGENT_REPO_V2_ADDRESS: Final[str] = "0x2bfE0f1142B04049d867389Bf91A84e498ED11E4"
 
-# InterAgentRepo V3 — deployed 2026-05-22 via script/DeployV3.s.sol
+# InterAgentRepo V3 — deployed 2026-05-22. Audit round-1 patched.
 # Deploy tx: 0x2ac8943ad54821ecdfe647da185cfe7e65c6812b512c54ddedbd7267ada186a7
-# Fixes all 4 HIGH findings from audit round-1:
-#   #1 originate validates initial LTV vs liquidation threshold + buffer
-#   #2 originate validates duration ≥ grace + 60s buffer
-#   #3 originate validates rateBps ≤ 100_000 (1000% APR ceiling)
-#   #4 defaultLoan uses Aave-style fair split (3% bounty / 1% insurance /
-#      debt-equiv to lender / excess back to borrower)
-# Plus LOW #8 (Chainlink answeredInRound) + #9 (OZ Pausable).
+# Superseded by V4 after audit round-2 found R2-#2 (pause-to-default DOS).
 INTERAGENT_REPO_V3_ADDRESS: Final[str] = "0xFfca5d80c3413Bd5D17971550cCD615f57f22945"
 
-# Active contract for new quotes — V3 is the production version
-INTERAGENT_REPO_ADDRESS: Final[str] = INTERAGENT_REPO_V3_ADDRESS
+# InterAgentRepo V4 — deployed 2026-05-22 via script/DeployV4.s.sol
+# Deploy tx: 0xf7376511cbbba7a2da057bd046c1153e6566ef7d3d6462decdb8183b15b3af09
+# R2-#2 fix: removed `whenNotPaused` from repay() — pause must block ENTRY
+# (originate/liquidate/defaultLoan), not EXIT (repay). Industry standard:
+# Aave V3, Compound III, Morpho Blue all keep repay always available.
+# All V3 fixes (audit round-1) inherited verbatim.
+INTERAGENT_REPO_V4_ADDRESS: Final[str] = "0x9d3b61d13a839968ffad94a0eedf73153c2fb31c"
+
+# Active contract for new quotes — V4 is production
+INTERAGENT_REPO_ADDRESS: Final[str] = INTERAGENT_REPO_V4_ADDRESS
 
 # EIP-712 domain — must match the contract's _domainSeparatorV4()
 EIP712_DOMAIN_NAME: Final[str] = "InterAgentRepo"
-EIP712_DOMAIN_VERSION: Final[str] = "3"
+EIP712_DOMAIN_VERSION: Final[str] = "4"
 
 # V3 audit-driven new constants
 MIN_LTV_BUFFER_BPS: Final[int] = 200             # initial LTV must be < (95% - 2%) = 93%
