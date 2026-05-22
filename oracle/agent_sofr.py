@@ -21,7 +21,7 @@ from typing import Optional
 from scipy.stats import norm
 
 from oracle.calibration import (
-    METHODOLOGY_VERSION, METHODOLOGY_IPFS_HASH,
+    METHODOLOGY_VERSION, METHODOLOGY_IPFS_HASH, METHODOLOGY_CONTENT_HASH_SHA256,
     CALIBRATION_SOURCE, CALIBRATION_DATA,
     REGIME_PREMIUM_BPS, REGIME_MAX_LTV, MATCHING_PAUSE_REGIMES,
     LGD_DEFAULT, DEFAULT_MAX_DEFAULT_PROB,
@@ -84,6 +84,7 @@ class AgentSOFRSnapshot:
     methodology_version: str
     methodology_url: str
     methodology_ipfs_hash: str
+    methodology_content_hash_sha256: str
     calibration_source: str
     calibration_data: str
 
@@ -125,9 +126,14 @@ class AgentSOFRSnapshot:
             "methodology": {
                 "version": self.methodology_version,
                 "url": self.methodology_url,
+                "content_hash_sha256": self.methodology_content_hash_sha256,
                 "ipfs": self.methodology_ipfs_hash,
                 "calibration_source": self.calibration_source,
                 "calibration_data": self.calibration_data,
+                "verify": (
+                    f"curl {self.methodology_url} | shasum -a 256  "
+                    f"# should match content_hash_sha256 above"
+                ),
             },
             "computed_at": self.computed_at,
             "valid_until": self.valid_until,
@@ -324,6 +330,7 @@ def compute_agent_sofr(
         methodology_version=METHODOLOGY_VERSION,
         methodology_url=f"https://regimeshift.xyz/methodology/{METHODOLOGY_VERSION}",
         methodology_ipfs_hash=METHODOLOGY_IPFS_HASH,
+        methodology_content_hash_sha256=METHODOLOGY_CONTENT_HASH_SHA256,
         calibration_source=CALIBRATION_SOURCE,
         calibration_data=CALIBRATION_DATA,
     )

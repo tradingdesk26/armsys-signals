@@ -39,9 +39,18 @@ CALIBRATION_DATA: Final[str] = (
 )
 
 # Bumped when any constant below changes.
-# This hash is included in every API response so agents can verify
-# they got rates computed under a specific methodology version.
+# IPFS CID populated post-pin (path B); SHA-256 below is the always-available
+# integrity hash (computed from the deployed HTML page, verified by HASHES.txt
+# served at https://regimeshift.xyz/methodology/HASHES.txt).
 METHODOLOGY_IPFS_HASH: Final[str] = ""  # populated post-pin
+
+# SHA-256 of the deployed methodology HTML page. Anyone can verify by:
+#   curl https://regimeshift.xyz/methodology/agent-sofr-v1 | shasum -a 256
+# Bump this constant whenever the page content changes (and bump the version
+# string too — agent-sofr-v1 → agent-sofr-v2 — so old hashes still resolve).
+METHODOLOGY_CONTENT_HASH_SHA256: Final[str] = (
+    "c6fecd2760399a121e543e8568e59fc007e6d55199361df64cb686fdc8ee137f"
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -377,7 +386,7 @@ def regime_index(name: str) -> int:
 __all__ = [
     # Methodology
     "METHODOLOGY_VERSION", "CALIBRATION_SOURCE", "CALIBRATION_DATA",
-    "METHODOLOGY_IPFS_HASH",
+    "METHODOLOGY_IPFS_HASH", "METHODOLOGY_CONTENT_HASH_SHA256",
     # Sigma thresholds
     "SIGMA_P50", "SIGMA_P65", "SIGMA_P80", "SIGMA_P93", "SIGMA_P99", "SIGMA_CUTS",
     # Jump weight
