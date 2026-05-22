@@ -14,7 +14,10 @@ Algorithm:
 
 from __future__ import annotations
 
+import json
+import threading
 import time
+import urllib.request
 from typing import Optional
 
 from matcher.intent_book import (
@@ -22,6 +25,45 @@ from matcher.intent_book import (
 )
 from matcher.quote_engine import QuoteEngine, SignedQuote
 from oracle.calibration import REGIME_MAX_LTV
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Webhook firing — best-effort, async (fire-and-forget thread per webhook)
+# ─────────────────────────────────────────────────────────────────────────────
+
+WEBHOOK_TIMEOUT_SEC: float = 5.0
+WEBHOOK_USER_AGENT: str = "regimeshift-clearinghouse-webhook/1.0"
+
+
+def _fire_webhook_async(url: str, payload: dict) -> None:
+    """
+    POST payload to url with a tight timeout, fire-and-forget.
+    Does not retry on failure — webhook consumer is responsible for idempotency.
+    Best-effort: any exception swallowed (will be visible only in container logs).
+    """
+    if not url:
+        return
+
+    def _worker() -> None:
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": WEBHOOK_USER_AGENT,
+                    "X-RegimeShift-Event": payload.get("event", "match_found"),
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=WEBHOOK_TIMEOUT_SEC) as resp:
+                resp.read()  # drain
+        except Exception:
+            # Log silently — in prod we'd push to monitoring; for MVP, best-effort.
+            pass
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 class Matcher:
@@ -93,6 +135,28 @@ class Matcher:
                     borrower_id=borrower.intent_id,
                     quote_payload=quote.to_dict(),
                 )
+
+                # Fire webhooks (best-effort) — both sides get notified if they
+                # provided a webhook_url at intent submission.
+                webhook_payload = {
+                    "event": "match_found",
+                    "match_id": match.match_id,
+                    "lender_intent_id": match.lender_intent_id,
+                    "borrower_intent_id": match.borrower_intent_id,
+                    "quote": quote.to_dict(),
+                    "created_at": match.created_at,
+                }
+                if lender.webhook_url:
+                    _fire_webhook_async(
+                        lender.webhook_url,
+                        {**webhook_payload, "your_role": "lender", "your_intent_id": lender.intent_id},
+                    )
+                if borrower.webhook_url:
+                    _fire_webhook_async(
+                        borrower.webhook_url,
+                        {**webhook_payload, "your_role": "borrower", "your_intent_id": borrower.intent_id},
+                    )
+
                 return match
 
         return None

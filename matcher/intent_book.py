@@ -48,6 +48,7 @@ class LenderIntent:
     status: str
     matched_to: Optional[str] = None
     created_at: int = 0
+    webhook_url: Optional[str] = None  # NEW: callback URL when matched
 
 
 @dataclass
@@ -64,6 +65,7 @@ class BorrowerIntent:
     status: str
     matched_to: Optional[str] = None
     created_at: int = 0
+    webhook_url: Optional[str] = None  # NEW: callback URL when matched
 
 
 @dataclass
@@ -101,7 +103,8 @@ class IntentBook:
                 expires_at INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'open',
                 matched_to TEXT,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                webhook_url TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_lender_status ON lender_intents(status);
             CREATE INDEX IF NOT EXISTS idx_lender_asset ON lender_intents(asset);
@@ -118,7 +121,8 @@ class IntentBook:
                 expires_at INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'open',
                 matched_to TEXT,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                webhook_url TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_borrower_status ON borrower_intents(status);
             CREATE INDEX IF NOT EXISTS idx_borrower_asset ON borrower_intents(principal_asset);
@@ -133,6 +137,12 @@ class IntentBook:
             CREATE INDEX IF NOT EXISTS idx_match_lender ON matches(lender_intent_id);
             CREATE INDEX IF NOT EXISTS idx_match_borrower ON matches(borrower_intent_id);
         """)
+        # Lightweight migration: add webhook_url column if missing (for existing DBs)
+        for table in ("lender_intents", "borrower_intents"):
+            try:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN webhook_url TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
         self._conn.commit()
 
     # ─── Intent submission ──────────────────────────────────────────────────
@@ -151,16 +161,17 @@ class IntentBook:
             expires_at=int(intent.get("expires_at", now + 1800)),
             status=IntentStatus.OPEN.value,
             created_at=now,
+            webhook_url=intent.get("webhook_url"),
         )
         self._conn.execute("""
             INSERT INTO lender_intents
               (intent_id, wallet, asset, amount, max_duration_sec, min_rate_bps,
-               max_default_prob, expires_at, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               max_default_prob, expires_at, status, created_at, webhook_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             row.intent_id, row.wallet, row.asset, row.amount,
             row.max_duration_sec, row.min_rate_bps, row.max_default_prob,
-            row.expires_at, row.status, row.created_at,
+            row.expires_at, row.status, row.created_at, row.webhook_url,
         ))
         self._conn.commit()
         return row
@@ -180,17 +191,18 @@ class IntentBook:
             expires_at=int(intent.get("expires_at", now + 1800)),
             status=IntentStatus.OPEN.value,
             created_at=now,
+            webhook_url=intent.get("webhook_url"),
         )
         self._conn.execute("""
             INSERT INTO borrower_intents
               (intent_id, wallet, principal_asset, principal_amount,
                collateral_asset, collateral_amount_max, duration_sec,
-               max_rate_bps, expires_at, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               max_rate_bps, expires_at, status, created_at, webhook_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             row.intent_id, row.wallet, row.principal_asset, row.principal_amount,
             row.collateral_asset, row.collateral_amount_max, row.duration_sec,
-            row.max_rate_bps, row.expires_at, row.status, row.created_at,
+            row.max_rate_bps, row.expires_at, row.status, row.created_at, row.webhook_url,
         ))
         self._conn.commit()
         return row
@@ -230,6 +242,27 @@ class IntentBook:
             SELECT * FROM matches ORDER BY created_at DESC LIMIT ?
         """, (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+    def find_match_for_intent(self, intent_id: str) -> Optional[dict]:
+        """Return match record if this intent has been matched, else None."""
+        row = self._conn.execute("""
+            SELECT * FROM matches
+            WHERE lender_intent_id = ? OR borrower_intent_id = ?
+            ORDER BY created_at DESC LIMIT 1
+        """, (intent_id, intent_id)).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_intent(self, intent_id: str) -> Optional[dict]:
+        """Return intent record (lender or borrower) by id, or None."""
+        for table in ("lender_intents", "borrower_intents"):
+            row = self._conn.execute(
+                f"SELECT * FROM {table} WHERE intent_id = ?", (intent_id,)
+            ).fetchone()
+            if row is not None:
+                d = dict(row)
+                d["_side"] = "lender" if table.startswith("lender") else "borrower"
+                return d
+        return None
 
     # ─── State updates ──────────────────────────────────────────────────────
 

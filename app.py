@@ -441,8 +441,9 @@ def root():
                 "/v1/risk/max-ltv",
             ],
             "clearinghouse": [
-                "POST /v1/intent/lend",
-                "POST /v1/intent/borrow",
+                "POST /v1/intent/lend           (accepts webhook_url for push notification)",
+                "POST /v1/intent/borrow         (accepts webhook_url for push notification)",
+                "GET /v1/intent/{id}/match?wait=N   (long-poll, max wait=300s)",
                 "GET /v1/intents/open",
                 "GET /v1/matches/recent",
                 "GET /v1/active-loans",
@@ -696,6 +697,62 @@ def get_active_loans():
         }
     except Exception as e:
         raise HTTPException(503, f"active loans scan failed: {e}")
+
+
+@app.get("/v1/intent/{intent_id}/match")
+async def long_poll_intent_match(intent_id: str, wait: int = 60):
+    """
+    Long-poll: returns immediately if intent is already matched, otherwise
+    holds the connection up to `wait` seconds (max 300) and returns as soon
+    as a match is found. Use for agents that don't have a public webhook URL.
+
+    Response:
+      - matched=true + match_id + full quote when matched
+      - matched=false + timeout_sec when wait elapses without match
+      - 404 if intent_id unknown
+    """
+    import asyncio
+    book = _get_intent_book()
+
+    # Validate intent exists
+    intent = book.get_intent(intent_id)
+    if intent is None:
+        raise HTTPException(404, f"intent {intent_id} not found")
+
+    wait = max(0, min(wait, 300))
+    start = time.time()
+    poll_interval = 1.0
+    deadline = start + wait
+
+    while True:
+        match = book.find_match_for_intent(intent_id)
+        if match is not None:
+            import json as _json
+            try:
+                quote = _json.loads(match["quote_payload"])
+            except Exception:
+                quote = None
+            return JSONResponse({
+                "ok": True,
+                "intent_id": intent_id,
+                "matched": True,
+                "match_id": match["match_id"],
+                "quote": quote,
+                "elapsed_sec": round(time.time() - start, 2),
+            })
+
+        # If wait=0 or deadline reached, return matched=false
+        if time.time() >= deadline:
+            return JSONResponse({
+                "ok": True,
+                "intent_id": intent_id,
+                "matched": False,
+                "timeout_sec": wait,
+                "elapsed_sec": round(time.time() - start, 2),
+                "hint": "Re-poll with the same intent_id, or submit with webhook_url for push notifications.",
+            })
+
+        await asyncio.sleep(poll_interval)
 
 
 @app.get("/v1/matches/recent")
