@@ -296,9 +296,11 @@ PRICE_STALENESS_LIMIT_SECONDS: Final[int] = 3600   # Chainlink heartbeat toleran
 # x402 endpoint pricing — USDC per request, on Base mainnet
 # ─────────────────────────────────────────────────────────────────────────────
 
-PRICE_RATE_QUERY_USDC: Final[float]   = 0.001   # /v1/rate/sofr/{asset}
-PRICE_MAX_LTV_USDC: Final[float]      = 0.001   # /v1/risk/max-ltv
-PRICE_LOAN_QUOTE_USDC: Final[float]   = 0.0002  # /v1/quote (signed EIP-712)
+PRICE_VRP_USDC: Final[float]          = 0.005   # /v1/asset/{eth,btc}/vrp
+PRICE_RATE_QUERY_USDC: Final[float]   = 0.10    # /v1/rate/sofr/usd (Messari Enterprise tier)
+PRICE_MAX_LTV_USDC: Final[float]      = 0.005   # /v1/risk/max-ltv
+PRICE_LOAN_QUOTE_FLAT_USDC: Final[float] = 0.05  # /v1/quote — flat floor
+PRICE_LOAN_QUOTE_BPS: Final[int]      = 5       # /v1/quote — 5 bps of principal (max of flat or %)
 
 # Cache TTL — how long a quote is valid before re-computation
 CACHE_TTL_SEC: Final[int] = 60

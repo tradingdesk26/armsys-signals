@@ -270,7 +270,7 @@ def _vrp_route(asset: str) -> RouteConfig:
             PaymentOption(
                 scheme="exact",
                 pay_to=EVM_ADDRESS,
-                price="$0.001",
+                price="$0.005",
                 network=EVM_NETWORK,
             ),
         ],
@@ -336,18 +336,21 @@ def _sofr_route(asset: str) -> RouteConfig:
             PaymentOption(
                 scheme="exact",
                 pay_to=EVM_ADDRESS,
-                price="$0.001",
+                price="$0.10",
                 network=EVM_NETWORK,
             ),
         ],
         mime_type="application/json",
         description=(
-            f"Agent-SOFR — decentralized {asset} short-rate benchmark for "
-            f"AI agents. Aggregates 8 market-derived + reference sources "
-            f"(Deribit PCP, HL funding, Aevo, Deribit basis, Aave V3, Compound, "
-            f"SOFR), takes weighted median, adds variance + regime premiums. "
-            f"6-mode regime classifier inherited from ARMSHookV3 production hook "
-            f"(730d ETH/USDT calibration, 210k bars). Methodology open + IPFS-pinned."
+            f"Agent-SOFR — the decentralized {asset} short-rate benchmark "
+            f"for AI agents (Messari Enterprise tier). Aggregates 8 market-"
+            f"derived + reference sources (Deribit PCP, HL funding, Aevo, "
+            f"Deribit basis, Aave V3, Compound, SOFR), takes weighted median, "
+            f"adds variance + regime premiums. 6-mode classifier inherited from "
+            f"ARMSHookV3 production hook (730d ETH/USDT calibration, 210k bars). "
+            f"Manipulation-resistant by design — market sources weighted 70%, "
+            f"governance-set rates capped at 20%, macro anchor 10%. "
+            f"Methodology open + IPFS-pinned, version: agent-sofr-v1."
         ),
         extensions=_SOFR_DISCOVERY,
     )
@@ -391,7 +394,7 @@ def _max_ltv_route() -> RouteConfig:
             PaymentOption(
                 scheme="exact",
                 pay_to=EVM_ADDRESS,
-                price="$0.001",
+                price="$0.005",
                 network=EVM_NETWORK,
             ),
         ],
@@ -458,8 +461,13 @@ def root():
             "status":     "live",
             "network":    EVM_NETWORK,
             "pay_to":     EVM_ADDRESS,
-            "price":      "$0.001 per call",
             "facilitator": FACILITATOR_URL,
+            "pricing": {
+                "VRP (ETH/BTC)":           "$0.005",
+                "Agent-SOFR USD":          "$0.10",
+                "Max-LTV risk":            "$0.005",
+                "Quote (signed, future)":  "$0.05 flat or 5 bps of principal",
+            },
         },
     }
 

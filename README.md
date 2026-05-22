@@ -32,14 +32,16 @@ Public base URL: `https://regimeshift.xyz/api/`
 | `GET /health` | liveness check |
 | `GET /stats` | request counter (paid calls + probes per endpoint) |
 
-### Paid data feeds (x402, $0.001 each)
+### Paid data feeds (x402, tiered pricing)
 
 | Path | Price | Description |
 |------|-------|-------------|
-| `GET /v1/asset/eth/vrp` | **$0.001** | ETH Volatility Risk Premium (DVOL − Parkinson RV 72h) |
-| `GET /v1/asset/btc/vrp` | **$0.001** | BTC Volatility Risk Premium |
-| `GET /v1/rate/sofr/usd?horizon=1h` | **$0.001** | Agent-SOFR USD short rate (multi-source weighted median + variance + regime premium) |
-| `GET /v1/risk/max-ltv?asset=ETH&duration_sec=3600&max_default_prob=0.001` | **$0.001** | Max-safe LTV for collateralized loans (math max + regime cap) |
+| `GET /v1/asset/eth/vrp` | **$0.005** | ETH Volatility Risk Premium (DVOL − Parkinson RV 72h) |
+| `GET /v1/asset/btc/vrp` | **$0.005** | BTC Volatility Risk Premium |
+| `GET /v1/rate/sofr/usd?horizon=1h` | **$0.10** | Agent-SOFR USD short rate (multi-source weighted median + variance + regime premium). Messari Enterprise tier — unique product, no equivalent elsewhere. |
+| `GET /v1/risk/max-ltv?asset=ETH&duration_sec=3600&max_default_prob=0.001` | **$0.005** | Max-safe LTV for collateralized loans (math max + regime cap) |
+
+Pricing rationale: VRP and max-LTV are commodity signal endpoints competitive with CoinMarketCap pro tier ($0.005). Agent-SOFR is a category-defining product — the only on-chain decentralized USD benchmark rate aggregated from 8 manipulation-resistant sources — priced at Messari Enterprise tier ($0.10) accordingly. Signed loan quotes (forthcoming) will be the highest tier at flat $0.05 floor or 5 bps of principal, whichever larger.
 
 ### Inter-Agent Clearinghouse (free; settlement on-chain)
 
