@@ -263,13 +263,33 @@ BASE_ASSETS: Final[dict[str, AssetMeta]] = {
 
 BASE_CHAIN_ID: Final[int] = 8453
 
-# InterAgentRepo deployed 2026-05-21 via script/Deploy.s.sol
+# InterAgentRepo V1 — deployed 2026-05-21 via script/Deploy.s.sol
 # Deploy tx: 0xf2344c9cd8a90c9371d990cc8420bbf839ac14fb9fb099f8c5465f0354ba2698
-INTERAGENT_REPO_ADDRESS: Final[str] = "0xaea176DDa786c8B14802f92385749C7Cdf6C7400"
+# Status: kept live for MVP-pre-liquidation demonstration; new quotes signed for V2.
+INTERAGENT_REPO_V1_ADDRESS: Final[str] = "0xaea176DDa786c8B14802f92385749C7Cdf6C7400"
+
+# InterAgentRepo V2 — deployed 2026-05-22 via script/DeployV2.s.sol
+# Deploy tx: 0xad3fdca2013de1a995dd3bc5778d539d6e443feec07aaff149eb291b3e9bab0a
+# Adds Chainlink-based pre-expiry liquidation + bounty + insurance pool.
+INTERAGENT_REPO_V2_ADDRESS: Final[str] = "0x2bfE0f1142B04049d867389Bf91A84e498ED11E4"
+
+# Active contract for new quotes (V2 has liquidation; quote engine signs for this)
+INTERAGENT_REPO_ADDRESS: Final[str] = INTERAGENT_REPO_V2_ADDRESS
 
 # EIP-712 domain — must match the contract's _domainSeparatorV4()
 EIP712_DOMAIN_NAME: Final[str] = "InterAgentRepo"
-EIP712_DOMAIN_VERSION: Final[str] = "1"
+EIP712_DOMAIN_VERSION: Final[str] = "2"
+
+# Chainlink price feeds on Base mainnet — read into V2 contract for liquidation
+CHAINLINK_ETH_USD_BASE: Final[str] = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70"
+CHAINLINK_USDC_USD_BASE: Final[str] = "0x7e860098F58bBFC8648a4311b374B1D669a2bc6B"
+
+# Liquidation parameters (mirrored from contract constants for off-chain monitoring)
+LIQUIDATION_LTV_BPS: Final[int] = 9_500           # 95% — current LTV ≥ this → liquidatable
+LIQUIDATOR_BOUNTY_BPS: Final[int] = 300            # 3% of collateral to liquidator
+INSURANCE_FEE_BPS: Final[int] = 100                # 1% of collateral to insurance pool
+LIQUIDATION_GRACE_SECONDS: Final[int] = 60         # anti-flash defense window
+PRICE_STALENESS_LIMIT_SECONDS: Final[int] = 3600   # Chainlink heartbeat tolerance
 
 
 # ─────────────────────────────────────────────────────────────────────────────

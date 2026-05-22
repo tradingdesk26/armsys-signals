@@ -49,10 +49,13 @@ from stats import StatsCounter
 # Agent-SOFR oracle (multi-source rate + max-LTV + variance engine)
 from oracle.agent_sofr import compute_agent_sofr, compute_max_ltv_for_loan
 
-# Inter-Agent Clearinghouse: intent book, matcher, quote engine
+# Inter-Agent Clearinghouse: intent book, matcher, quote engine, liquidation monitor
 from matcher.intent_book import IntentBook
 from matcher.quote_engine import QuoteEngine
 from matcher.matcher import Matcher
+from matcher.liquidation_monitor import (
+    scan_liquidatable_loans, scan_all_active_loans,
+)
 
 load_dotenv("/opt/arms-signals/.env")  # absolute path so it loads under systemd
 
@@ -439,10 +442,14 @@ def root():
                 "POST /v1/intent/borrow",
                 "GET /v1/intents/open",
                 "GET /v1/matches/recent",
+                "GET /v1/active-loans",
+                "GET /v1/liquidatable-loans",
             ],
         },
         "contracts": {
-            "InterAgentRepo": "0xaea176DDa786c8B14802f92385749C7Cdf6C7400",
+            "InterAgentRepoV1": "0xaea176DDa786c8B14802f92385749C7Cdf6C7400",
+            "InterAgentRepoV2": "0x2bfE0f1142B04049d867389Bf91A84e498ED11E4",
+            "active": "V2",
             "chain": "Base mainnet (8453)",
         },
         "dashboard": "https://regimeshift.xyz",
@@ -635,6 +642,49 @@ def get_open_intents():
             } for b in borrowers
         ],
     }
+
+
+@app.get("/v1/liquidatable-loans")
+def get_liquidatable_loans():
+    """
+    Return all currently-active loans whose on-chain LTV ≥ 95% (liquidation
+    threshold) AND grace period has passed. Any agent can call
+    InterAgentRepoV2.liquidate(loanId) to claim the 3% bounty.
+
+    Read-only — does NOT execute liquidations. Free endpoint (encourages
+    monitoring + competition between liquidators).
+    """
+    try:
+        loans = scan_liquidatable_loans(_get_intent_book(), limit=100)
+        return {
+            "ok": True,
+            "contract": "0x2bfE0f1142B04049d867389Bf91A84e498ED11E4",
+            "chain_id": 8453,
+            "liquidation_ltv_threshold_bps": 9500,
+            "liquidator_bounty_bps": 300,
+            "insurance_fee_bps": 100,
+            "loans": [loan.to_dict() for loan in loans],
+        }
+    except Exception as e:
+        raise HTTPException(503, f"liquidation monitor failed: {e}")
+
+
+@app.get("/v1/active-loans")
+def get_active_loans():
+    """
+    Return all currently-active loans with current LTV (whether liquidatable
+    or not). Useful for dashboard / lender position monitoring.
+    """
+    try:
+        loans = scan_all_active_loans(_get_intent_book(), limit=100)
+        return {
+            "ok": True,
+            "contract": "0x2bfE0f1142B04049d867389Bf91A84e498ED11E4",
+            "chain_id": 8453,
+            "loans": [loan.to_dict() for loan in loans],
+        }
+    except Exception as e:
+        raise HTTPException(503, f"active loans scan failed: {e}")
 
 
 @app.get("/v1/matches/recent")
