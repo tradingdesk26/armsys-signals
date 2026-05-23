@@ -341,16 +341,17 @@ def _sofr_route(asset: str) -> RouteConfig:
             ),
         ],
         mime_type="application/json",
+        # Description kept under 500 chars — CDP facilitator's JSON-schema
+        # validator hard-rejects payloads with description > 500 (the only
+        # endpoint where we used to hit it; took some time to isolate).
         description=(
-            f"Agent-SOFR — the decentralized {asset} short-rate benchmark "
-            f"for AI agents (Messari Enterprise tier). Aggregates 8 market-"
-            f"derived + reference sources (Deribit PCP, HL funding, Aevo, "
-            f"Deribit basis, Aave V3, Compound, SOFR), takes weighted median, "
-            f"adds variance + regime premiums. 6-mode classifier inherited from "
-            f"ARMSHookV3 production hook (730d ETH/USDT calibration, 210k bars). "
-            f"Manipulation-resistant by design — market sources weighted 70%, "
-            f"governance-set rates capped at 20%, macro anchor 10%. "
-            f"Methodology open + IPFS-pinned, version: agent-sofr-v1."
+            f"Agent-SOFR — decentralized {asset} short-rate benchmark for AI "
+            f"agents (Messari Enterprise tier). Weighted-median of 7 sources "
+            f"(Deribit PCP, HL funding, Aevo, Deribit basis, Aave V3, Compound, "
+            f"NY Fed SOFR) + variance + regime premiums. BNS-calibrated 6-mode "
+            f"classifier on 444k ETH/USDC 5-min bars (λ=1.097 closed-form). "
+            f"Market 70%, governance-capped 20%, macro 10%. Open + IPFS-pinned "
+            f"methodology: agent-sofr-v1."
         ),
         extensions=_SOFR_DISCOVERY,
     )
