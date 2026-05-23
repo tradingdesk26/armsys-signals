@@ -1,0 +1,21 @@
+[Unit]
+Description=RegimeShift x402 facilitator (own, bypasses CDP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dz
+Group=dz
+WorkingDirectory=/opt/regimeshift-facilitator
+EnvironmentFile=/opt/regimeshift-facilitator/.env
+ExecStart=/opt/arms-signals/venv/bin/python /opt/regimeshift-facilitator/main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/opt/regimeshift-facilitator/server.log
+StandardError=append:/opt/regimeshift-facilitator/server.log
+
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target
