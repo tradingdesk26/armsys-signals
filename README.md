@@ -165,62 +165,73 @@ Every API response carries the methodology page's `content_hash_sha256` + IPFS `
 - **Pay to**: `0x82B17D0bb4De9ae6c3491257B60E8245e70acd7B` (self-custodied
   agent wallet — same wallet the RegimeShift trading agent runs on,
   so paid USDC immediately becomes tradeable capital)
-- **Facilitator**: **self-hosted** — `http://127.0.0.1:8091` on the same VM.
-  Verifies EIP-712 signatures + submits `USDC.transferWithAuthorization`
-  (EIP-3009) on Base mainnet. Every paid 200 = one on-chain tx, viewable
-  on BaseScan. See [own_facilitator.py](own_facilitator.py) (FastAPI, ~150 LOC).
 - **Bazaar discovery**: `extensions.bazaar.{info,schema}` included in
   every 402 envelope so agentic.market and the x402 Bazaar index can
   catalog the endpoint automatically.
 
-### Why self-hosted (and not the CDP facilitator)
+### Two-tier facilitator (resilience layer)
 
-The default Coinbase CDP facilitator (`api.cdp.coinbase.com/platform/v2/x402`)
-is the obvious choice and what most x402 servers ship with. We initially
-tried it. CDP's deployed JSON-schema validator is mid-migration between
-spec v1 (legacy enum networks: `base`, `polygon`) and v2 (CAIP-2:
-`eip155:8453`) — it rejects payloads from current `x402` SDK 2.x with
-errors like `network not in enum [...]`, `'scheme' required`, and
-`description exceeds maximum string length`. We tried SDK 2.10 and 2.11
-against multiple payload shapes; none cleared the validator.
+For a benchmark rate that other agents make trading decisions against,
+"sometimes the paid endpoint is down" is not acceptable. So we architect
+paid x402 settlement as a chain, not a single point of failure:
 
-The x402 protocol was explicitly designed for facilitator plurality — it's
-a pluggable role, not a Coinbase monopoly. The `x402-foundation/x402`
-monorepo ships a `examples/python/facilitator/basic` blueprint. We
-adapted it: the EVM scheme handler (`register_exact_evm_facilitator`)
-plus three HTTP routes (`/verify`, `/settle`, `/supported`). The relayer
-wallet pays ~$0.002 in gas per settle — at our $0.005-$0.10 per-call
-prices this is sub-percent overhead.
+| Tier | URL | Role | Gas paid by |
+|------|-----|------|-------------|
+| **Primary** | `https://api.cdp.coinbase.com/platform/v2/x402` | Default for every paid call | Coinbase CDP relayer |
+| **Fallback** | `http://127.0.0.1:8091` (self-hosted on the same VM) | Auto-engages on any primary failure | Our own relayer wallet (on Base mainnet) |
 
-Trade-off: an external client must trust our facilitator. We mitigate by
-publishing the source + every settlement tx hash in `/stats` and the
-`payment-response` header. A skeptical client can swap facilitators or
-re-verify on-chain.
+The middleware (`facilitator_failover.py`) wraps both clients. Every
+`verify` / `settle` call tries the primary first; if it raises (timeout,
+connection error, rate-limit, transient 5xx, anything), the call
+transparently falls back to the secondary. External clients see exactly
+one response — they don't notice failovers happened. A 200 OK with
+`isValid=false` is treated as a legitimate rejection (signature really is
+bad / authorization expired) and is NOT retried, because the secondary
+would reject for the same reason.
+
+The fallback is a ~150 LOC FastAPI service (`own_facilitator.py`) built
+on the x402 SDK's `x402Facilitator` + `register_exact_evm_facilitator(eip155:8453)`
+primitives — the same verify+settle code path CDP itself runs. Running
+it on the same VM keeps roundtrip latency under 10 ms when fallback
+engages, and means there is no path between "primary is down" and
+"paid endpoints are unavailable".
+
+Both tiers settle with real `USDC.transferWithAuthorization` (EIP-3009)
+txs on Base mainnet — every paid 200 OK carries the on-chain tx hash in
+the `payment-response` header, regardless of which tier handled it.
 
 ### Configuration
 
 To run the server yourself, populate `.env` with:
 
 ```
-FACILITATOR_URL=http://127.0.0.1:8091   # our local facilitator
+# Primary facilitator — Coinbase CDP (auto-detected from these keys)
+CDP_API_KEY_ID=<uuid from portal.cdp.coinbase.com>
+CDP_API_KEY_SECRET=<base64 Ed25519 private key, shown once at creation>
+
+# Fallback facilitator — local self-hosted (transparent failover)
+FALLBACK_FACILITATOR_URL=http://127.0.0.1:8091
+
+# Network + receiving wallet
 EVM_NETWORK=eip155:8453                  # Base mainnet (CAIP-2)
 EVM_ADDRESS=0x...                        # your pay-to wallet (receives paid USDC)
+
+# For the clearinghouse routes
 ORACLE_PRIVATE_KEY=0x...                 # signs loan quotes for InterAgentRepoV4
 ```
 
-Plus, the facilitator itself needs (`own_facilitator.py`):
+The self-hosted facilitator itself needs (`own_facilitator.py`):
 
 ```
-EVM_PRIVATE_KEY=0x...                    # relayer key — pays gas for transferWithAuthorization
+EVM_PRIVATE_KEY=0x...                    # relayer key — pays gas during fallback
 EVM_RPC_URL=https://base-mainnet...      # Base mainnet RPC endpoint
 ```
 
 If `ORACLE_PRIVATE_KEY` is absent, only the rate/risk endpoints work
 — `/v1/intent/*` and clearinghouse routes will fail to initialize.
-
-You can also point `FACILITATOR_URL` at CDP if/when their validator
-catches up to x402 SDK 2.x — the rest of the server doesn't care which
-facilitator settles.
+If `FALLBACK_FACILITATOR_URL` is absent the server runs single-tier
+(primary only). If `CDP_API_KEY_ID` is absent the primary becomes
+whatever `FACILITATOR_URL` points at (defaults to Base Sepolia for dev).
 
 ## Try it
 
@@ -352,7 +363,7 @@ Either party (or anyone) can submit this directly to `InterAgentRepo.originate(q
 
 - **FastAPI** for the API server (uvicorn with `--proxy-headers --root-path /api`)
 - **x402 SDK (Python) 2.x** for the payment middleware (server side)
-- **Self-hosted x402 facilitator** on the same VM — `own_facilitator.py`, FastAPI on port 8091, uses `x402.x402Facilitator` + `FacilitatorWeb3Signer` to verify EIP-712 signatures and submit `transferWithAuthorization` on Base mainnet
+- **Two-tier facilitator** — Coinbase CDP as primary (Coinbase pays relayer gas), self-hosted FastAPI service (`own_facilitator.py`, port 8091) as transparent fallback. Failover logic in `facilitator_failover.py` — wraps both `HTTPFacilitatorClient` instances behind the SDK's `FacilitatorClient` protocol so the rest of the stack doesn't know which tier handled a given call
 - **Deribit / Hyperliquid / Aevo / Binance public APIs** for live market data
 - **Aave V3 + Compound** on Base via direct eth_call to Pool contracts (Alchemy RPC)
 - **systemd** on a GCE VM behind Cloudflare + nginx (two services: `arms-signals.service` for the API + `regimeshift-facilitator.service` for the local facilitator)
@@ -365,6 +376,7 @@ Either party (or anyone) can submit this directly to `InterAgentRepo.originate(q
 
 ```
 app.py                       FastAPI server + x402 paywall + clearinghouse routes
+facilitator_failover.py      Two-tier FacilitatorClient (CDP primary + local fallback)
 own_facilitator.py           Self-hosted x402 facilitator (verify + settle on Base mainnet)
 signals.py                   VRP computation from Deribit OHLC + DVOL
 stats.py                     Persistent request counter
@@ -386,7 +398,7 @@ matcher/                     Intent book (SQLite) + matcher + quote engine (EIP-
 - ✅ Inter-Agent Clearinghouse (`/intent/*`, `/matches/recent`) — live, end-to-end
 - ✅ InterAgentRepoV4 deployed on Base + Foundry tests (8/8 + 15/15 ported)
 - ✅ EIP-712 quote signing — on-chain `recoverSigner()` verified on V4
-- ✅ **Self-hosted x402 facilitator** on Base mainnet — paid calls settle via `transferWithAuthorization`, every tx visible on BaseScan
+- ✅ **Two-tier x402 facilitator** on Base mainnet — Coinbase CDP primary + self-hosted fallback; every paid 200 settles via `transferWithAuthorization`, every tx visible on BaseScan
 - ✅ Bazaar discovery extension — listed on agentic.market
 - ✅ Request counter visible on regimeshift.xyz dashboard
 - ✅ Live MVP demo loan executed on-chain (2026-05-22, $0.50 USDC, V4)

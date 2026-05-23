@@ -91,17 +91,21 @@ def _get_matcher() -> Matcher:
 
 METHODOLOGY_BASE = "https://regimeshift.xyz/methodology"
 
-# x402 config. Mode is decided by presence of CDP_API_KEY_ID:
-#   - With CDP creds → Coinbase CDP facilitator on Base MAINNET (real USDC).
-#   - Without        → default x402.org facilitator on Base Sepolia (testnet).
+# x402 facilitator config — two-tier with transparent failover.
+#
+# PRIMARY:    Coinbase CDP if CDP_API_KEY_ID is set (default), otherwise the
+#             URL in FACILITATOR_URL (own/x402.org).
+# FALLBACK:   Optional, set via FALLBACK_FACILITATOR_URL. When configured,
+#             every verify/settle call tries the primary first and
+#             transparently fails over to the fallback on any exception.
+#             This keeps paid endpoints serving even if the primary is
+#             rate-limiting, 5xx-ing, or briefly unreachable.
 EVM_ADDRESS = os.getenv("EVM_ADDRESS", "0x82B17D0bb4De9ae6c3491257B60E8245e70acd7B")
 CDP_API_KEY_ID     = os.getenv("CDP_API_KEY_ID")
 CDP_API_KEY_SECRET = os.getenv("CDP_API_KEY_SECRET")
 
 if CDP_API_KEY_ID and CDP_API_KEY_SECRET:
-    # CDP /supported lists both "base" (v1) and "eip155:8453" (v2). Use
-    # the v2 CAIP-2 form since the x402 SDK in this repo is on v2.
-    EVM_NETWORK: Network = os.getenv("EVM_NETWORK", "eip155:8453")
+    EVM_NETWORK: Network = os.getenv("EVM_NETWORK", "eip155:8453")  # Base mainnet, CAIP-2
     FACILITATOR_URL = os.getenv(
         "FACILITATOR_URL",
         "https://api.cdp.coinbase.com/platform/v2/x402",
@@ -111,6 +115,9 @@ else:
     EVM_NETWORK = os.getenv("EVM_NETWORK", "eip155:84532")  # Base Sepolia v2
     FACILITATOR_URL = os.getenv("FACILITATOR_URL", "https://x402.org/facilitator")
     USE_CDP = False
+
+# Optional fallback — typically our own facilitator on the same VM
+FALLBACK_FACILITATOR_URL = os.getenv("FALLBACK_FACILITATOR_URL", "").strip()
 
 
 def _cdp_create_headers() -> dict[str, dict[str, str]]:
@@ -192,7 +199,28 @@ if USE_CDP:
         _cdp_create_headers
     )
 
-facilitator = HTTPFacilitatorClient(FacilitatorConfig(**_fac_config_kwargs))
+_primary_facilitator = HTTPFacilitatorClient(FacilitatorConfig(**_fac_config_kwargs))
+
+# Wire up the two-tier facilitator if a fallback URL is configured and is
+# distinct from the primary. Falls back transparently on any primary failure
+# (verify or settle). External clients see no behavioural difference.
+if (
+    FALLBACK_FACILITATOR_URL
+    and FALLBACK_FACILITATOR_URL.rstrip("/") != FACILITATOR_URL.rstrip("/")
+):
+    from facilitator_failover import FallbackFacilitatorClient
+    _fallback_facilitator = HTTPFacilitatorClient(
+        FacilitatorConfig(url=FALLBACK_FACILITATOR_URL)
+    )
+    facilitator = FallbackFacilitatorClient(_primary_facilitator, _fallback_facilitator)
+    print(
+        f"[x402] facilitator (hybrid):  primary={FACILITATOR_URL}  "
+        f"fallback={FALLBACK_FACILITATOR_URL}"
+    )
+else:
+    facilitator = _primary_facilitator
+    print(f"[x402] facilitator (single): {FACILITATOR_URL}")
+
 x402_server = x402ResourceServer(facilitator)
 x402_server.register(EVM_NETWORK, ExactEvmServerScheme())
 
