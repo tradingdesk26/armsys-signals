@@ -144,14 +144,18 @@ machines. Refreshed every 60s, aggregated from 7 sources via weighted median
 | Aevo ETH options PCP | 11% | Cross-check on options markets |
 | Deribit ETH futures basis (3m) | 10% | Cost-of-carry sanity check |
 | Aave V3 Base USDC borrow | 10% | DeFi reference (capped — governance-set) |
-| Compound Base USDC | 5% | TODO — not yet implemented |
+| Compound Base USDC borrow | 5% | DeFi reference (capped — governance-set) |
 | NY Fed SOFR 30d | 10% | TradFi macro anchor |
 
 Note: WETH borrow rate **deliberately excluded** — it's the ETH lending market (interest paid in ETH), structurally unrelated to USDC short rate. We compute the rate at which agents borrow USD against ETH collateral, not the rate at which someone borrows ETH itself.
 
 Total rate = `weighted_median(sources) + variance_premium + regime_adjustment`
 
-Calibration inherited from the production [ARMSHookV3 Uniswap v4 hook](https://github.com/tradingdesk26/regimeshift-fx) — 730 days of ETH/USDT 5-min bars, 210k observations, 6-mode regime classifier with 10% down-hysteresis. **Same math as the hook deployed on Base mainnet for weeks.**
+Variance + regime calibration is **Barndorff-Nielsen–Shephard** jump decomposition: bipower variation (BV) and tripower quarticity (TQ) → Huang-Tauchen Z-statistic separates the continuous variance component `cv` from the jump component `j²`. Jump-weighting parameter λ is identified closed-form (5% margin over total integrated loss) → λ = 1.097. The 6-mode regime classifier is then calibrated on the BNS-decomposed series with 10% down-hysteresis.
+
+Dataset: **444,219 5-min bars (~4.2 years) of Binance ETH/USDC 1-second tickers aggregated upward** (`arms/research/eth_jump_multihorizon.py`). Same math runs in the production [ARMSHookV3 Uniswap v4 hook](https://github.com/tradingdesk26/regimeshift-fx) deployed on Base mainnet.
+
+Every API response carries the methodology page's `content_hash_sha256` + IPFS `ipfs_cid` — clients can independently verify the math they're paying for hasn't moved.
 
 ## Payment
 
@@ -161,29 +165,62 @@ Calibration inherited from the production [ARMSHookV3 Uniswap v4 hook](https://g
 - **Pay to**: `0x82B17D0bb4De9ae6c3491257B60E8245e70acd7B` (self-custodied
   agent wallet — same wallet the RegimeShift trading agent runs on,
   so paid USDC immediately becomes tradeable capital)
-- **Facilitator**: `https://api.cdp.coinbase.com/platform/v2/x402`
-  (Coinbase CDP, Ed25519-signed JWT auth)
+- **Facilitator**: **self-hosted** — `http://127.0.0.1:8091` on the same VM.
+  Verifies EIP-712 signatures + submits `USDC.transferWithAuthorization`
+  (EIP-3009) on Base mainnet. Every paid 200 = one on-chain tx, viewable
+  on BaseScan. See [own_facilitator.py](own_facilitator.py) (FastAPI, ~150 LOC).
 - **Bazaar discovery**: `extensions.bazaar.{info,schema}` included in
-  every 402 envelope so agentic.market and the CDP Bazaar index can
+  every 402 envelope so agentic.market and the x402 Bazaar index can
   catalog the endpoint automatically.
+
+### Why self-hosted (and not the CDP facilitator)
+
+The default Coinbase CDP facilitator (`api.cdp.coinbase.com/platform/v2/x402`)
+is the obvious choice and what most x402 servers ship with. We initially
+tried it. CDP's deployed JSON-schema validator is mid-migration between
+spec v1 (legacy enum networks: `base`, `polygon`) and v2 (CAIP-2:
+`eip155:8453`) — it rejects payloads from current `x402` SDK 2.x with
+errors like `network not in enum [...]`, `'scheme' required`, and
+`description exceeds maximum string length`. We tried SDK 2.10 and 2.11
+against multiple payload shapes; none cleared the validator.
+
+The x402 protocol was explicitly designed for facilitator plurality — it's
+a pluggable role, not a Coinbase monopoly. The `x402-foundation/x402`
+monorepo ships a `examples/python/facilitator/basic` blueprint. We
+adapted it: the EVM scheme handler (`register_exact_evm_facilitator`)
+plus three HTTP routes (`/verify`, `/settle`, `/supported`). The relayer
+wallet pays ~$0.002 in gas per settle — at our $0.005-$0.10 per-call
+prices this is sub-percent overhead.
+
+Trade-off: an external client must trust our facilitator. We mitigate by
+publishing the source + every settlement tx hash in `/stats` and the
+`payment-response` header. A skeptical client can swap facilitators or
+re-verify on-chain.
+
+### Configuration
 
 To run the server yourself, populate `.env` with:
 
 ```
-CDP_API_KEY_ID=<uuid from portal.cdp.coinbase.com>
-CDP_API_KEY_SECRET=<base64 Ed25519 private key, shown once at creation>
-EVM_ADDRESS=0x...               # your own pay-to wallet
-ORACLE_PRIVATE_KEY=0x...        # keypair authorized to sign loan quotes
+FACILITATOR_URL=http://127.0.0.1:8091   # our local facilitator
+EVM_NETWORK=eip155:8453                  # Base mainnet (CAIP-2)
+EVM_ADDRESS=0x...                        # your pay-to wallet (receives paid USDC)
+ORACLE_PRIVATE_KEY=0x...                 # signs loan quotes for InterAgentRepoV4
 ```
 
-If CDP credentials are absent the server falls back to Base Sepolia
-testnet + the default `x402.org` facilitator (good for local dev).
-If `ORACLE_PRIVATE_KEY` is absent, only the rate/risk endpoints work
-— `/quote` and `/intent/*` will fail to initialize.
+Plus, the facilitator itself needs (`own_facilitator.py`):
 
-One important detail: the CDP facilitator rejects payloads where
-`buyer == payTo` with `invalid_payload`. Use a distinct buyer wallet
-(see `demo_client.py`).
+```
+EVM_PRIVATE_KEY=0x...                    # relayer key — pays gas for transferWithAuthorization
+EVM_RPC_URL=https://base-mainnet...      # Base mainnet RPC endpoint
+```
+
+If `ORACLE_PRIVATE_KEY` is absent, only the rate/risk endpoints work
+— `/v1/intent/*` and clearinghouse routes will fail to initialize.
+
+You can also point `FACILITATOR_URL` at CDP if/when their validator
+catches up to x402 SDK 2.x — the rest of the server doesn't care which
+facilitator settles.
 
 ## Try it
 
@@ -228,22 +265,22 @@ on-chain Base mainnet tx hash.
   "ok": true,
   "asset": "USD",
   "horizon": "1h",
-  "rate": 4.7233,
+  "rate": 4.4257,
   "decomposition": {
-    "base_anchor": 4.1233,
+    "base_anchor": 4.1257,
     "variance_premium": 0.0,
-    "regime_adjustment": 0.6
+    "regime_adjustment": 0.3
   },
   "variance": {
-    "cv_per_bar": 1.586e-06,
-    "j_squared_per_bar": 1.508e-05,
+    "cv_per_bar": 3.82e-07,
+    "j_squared_per_bar": 4.26e-06,
     "lambda_jump_weight": 1.097,
-    "sigma_5min_bp": 42.58,
-    "sigma_horizon_pct": 1.475
+    "sigma_5min_bp": 22.48,
+    "sigma_horizon_pct": 0.779
   },
   "regime": {
-    "mode": "HIGH",
-    "mode_index": 4,
+    "mode": "ELEVATED",
+    "mode_index": 2,
     "thresholds_bp": {
       "p50": 14.21, "p65": 17.77, "p80": 23.25,
       "p93": 34.45, "p99": 62.93
@@ -253,11 +290,21 @@ on-chain Base mainnet tx hash.
   "methodology": {
     "version": "agent-sofr-v1",
     "url": "https://regimeshift.xyz/methodology/agent-sofr-v1",
-    "calibration_source": "arms/research/round25_calibration.csv",
-    "calibration_data": "210228 ETH/USDT 5-min bars (2024-04-26 → 2026-04-26)"
+    "content_hash_sha256": "001dd476c5e14755617200899b1f7f1de4a6d54050c7eb3f6ffb3988c1a199fb",
+    "ipfs_cid": "bafkreiaadxkhnrpbi5kwc4qargnr67y54stnkqcqy7vt6373hgemdimz7m",
+    "ipfs_gateways": [
+      "https://ipfs.io/ipfs/bafkreiaadxkhnrpbi5kwc4qargnr67y54stnkqcqy7vt6373hgemdimz7m",
+      "https://dweb.link/ipfs/bafkreiaadxkhnrpbi5kwc4qargnr67y54stnkqcqy7vt6373hgemdimz7m"
+    ],
+    "calibration_source": "arms/research/eth_jump_multihorizon.py",
+    "calibration_data": "444219 5-min bars (~4.2yr) Binance ETH/USDC, BNS jump decomposition (BV+TQ → Z-stat), lambda=1.097 closed-form",
+    "verify": {
+      "https": "curl https://regimeshift.xyz/methodology/agent-sofr-v1 | shasum -a 256",
+      "ipfs": "curl -H 'Accept: application/vnd.ipld.raw' https://ipfs.io/ipfs/bafkrei... | shasum -a 256"
+    }
   },
-  "computed_at": 1779383267,
-  "valid_until": 1779383327,
+  "computed_at": 1779530967,
+  "valid_until": 1779531027,
   "cache_ttl_sec": 60
 }
 ```
@@ -304,29 +351,31 @@ Either party (or anyone) can submit this directly to `InterAgentRepo.originate(q
 ## Stack
 
 - **FastAPI** for the API server (uvicorn with `--proxy-headers --root-path /api`)
-- **x402 SDK (Python)** for the payment middleware
-- **Coinbase CDP SDK** for facilitator JWT auth
+- **x402 SDK (Python) 2.x** for the payment middleware (server side)
+- **Self-hosted x402 facilitator** on the same VM — `own_facilitator.py`, FastAPI on port 8091, uses `x402.x402Facilitator` + `FacilitatorWeb3Signer` to verify EIP-712 signatures and submit `transferWithAuthorization` on Base mainnet
 - **Deribit / Hyperliquid / Aevo / Binance public APIs** for live market data
 - **Aave V3 + Compound** on Base via direct eth_call to Pool contracts (Alchemy RPC)
-- **systemd** on a GCE VM behind Cloudflare + nginx
+- **systemd** on a GCE VM behind Cloudflare + nginx (two services: `arms-signals.service` for the API + `regimeshift-facilitator.service` for the local facilitator)
 - **SQLite** for intent book + match persistence
-- **scipy / numpy** for variance + LTV math
-- **eth-account** for EIP-712 quote signing
+- **scipy / numpy** for BNS jump decomposition + LTV math
+- **eth-account / web3.py** for EIP-712 quote signing + facilitator settlement
 - Persistent request counter in JSON, exposed via `/stats`
 
 ## Files
 
 ```
-app.py                FastAPI server + x402 paywall + clearinghouse routes
-signals.py            VRP computation from Deribit OHLC + DVOL
-stats.py              Persistent request counter
-demo_client.py        End-to-end paid call (x402HttpxClient over httpx)
-arms-signals.service  systemd unit
-requirements.txt      pinned x402 + cdp-sdk + fastapi + scipy + eth-account
+app.py                       FastAPI server + x402 paywall + clearinghouse routes
+own_facilitator.py           Self-hosted x402 facilitator (verify + settle on Base mainnet)
+signals.py                   VRP computation from Deribit OHLC + DVOL
+stats.py                     Persistent request counter
+demo_client.py               End-to-end paid call (x402 SDK over requests)
+arms-signals.service         systemd unit (API on :8000)
+regimeshift-facilitator.service  systemd unit (facilitator on :8091)
+requirements.txt             pinned x402 + fastapi + scipy + eth-account + web3
 
-oracle/               Agent-SOFR oracle modules (calibration, regime, variance,
-                      max_ltv, rate_aggregator, agent_sofr)
-matcher/              Intent book (SQLite) + matcher + quote engine (EIP-712)
+oracle/                      Agent-SOFR oracle modules (calibration, regime,
+                             variance, max_ltv, rate_aggregator, agent_sofr)
+matcher/                     Intent book (SQLite) + matcher + quote engine (EIP-712)
 ```
 
 ## Roadmap
@@ -335,16 +384,19 @@ matcher/              Intent book (SQLite) + matcher + quote engine (EIP-712)
 - ✅ `/v1/rate/sofr/usd` — Agent-SOFR USD short-rate benchmark
 - ✅ `/v1/risk/max-ltv` — max-safe LTV signal
 - ✅ Inter-Agent Clearinghouse (`/intent/*`, `/matches/recent`) — live, end-to-end
-- ✅ InterAgentRepo.sol deployed on Base + Foundry tests (10/10)
-- ✅ EIP-712 quote signing — on-chain `recoverSigner()` verified
-- ✅ x402 paywall via Coinbase CDP facilitator — paid calls settle on-chain
+- ✅ InterAgentRepoV4 deployed on Base + Foundry tests (8/8 + 15/15 ported)
+- ✅ EIP-712 quote signing — on-chain `recoverSigner()` verified on V4
+- ✅ **Self-hosted x402 facilitator** on Base mainnet — paid calls settle via `transferWithAuthorization`, every tx visible on BaseScan
 - ✅ Bazaar discovery extension — listed on agentic.market
 - ✅ Request counter visible on regimeshift.xyz dashboard
-- ⬜ Live demo loan executed on-chain ($5-10 between funded wallets)
-- ⬜ Dashboard panel showing live intents + recent matches
-- ⬜ Methodology pages on `regimeshift.xyz/methodology/*` with IPFS pinning
+- ✅ Live MVP demo loan executed on-chain (2026-05-22, $0.50 USDC, V4)
+- ✅ Loan registry + Open Order Book panels live on regimeshift.xyz
+- ✅ Methodology pages on `regimeshift.xyz/methodology/*` with IPFS pinning + SHA-256 in every API response
+- ✅ Compound borrow rate read — live in aggregator
+- ✅ BNS jump decomposition + λ=1.097 closed-form calibration on 444k bars
+- ✅ Autonomous demo bot (D pays $0.10 USDC every 90 min for fresh SOFR — agents using our own data via x402)
 - ⬜ `/v1/rate/sofr/{eur,eth}` — EUR + ETH rate variants
-- ⬜ Compound borrow rate read (currently TODO in rate aggregator)
+- ⬜ Multi-asset principal/collateral (V4 is USDC/WETH-only)
 
 ## Built for
 
