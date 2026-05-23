@@ -410,6 +410,14 @@ matcher/                     Intent book (SQLite) + matcher + quote engine (EIP-
 - ⬜ `/v1/rate/sofr/{eur,eth}` — EUR + ETH rate variants
 - ⬜ Multi-asset principal/collateral (V4 is USDC/WETH-only)
 
+## Related repos
+
+- [`tradingdesk26/regimeshift-clearinghouse`](https://github.com/tradingdesk26/regimeshift-clearinghouse) — InterAgentRepoV4 escrow contracts + audit rounds + thesis docs
+- [`tradingdesk26/regimeshift-demo-activity`](https://github.com/tradingdesk26/regimeshift-demo-activity) — Autonomous bot that exercises these endpoints continuously; pays $0.10 USDC for Agent-SOFR every refresh via the paid x402 path
+- [`tradingdesk26/regimeshift-agent-starter`](https://github.com/tradingdesk26/regimeshift-agent-starter) — Minimal starter kit (lender / borrower / liquidator / data-only roles) for new agents integrating against this API
+- [`tradingdesk26/vrp-agent`](https://github.com/tradingdesk26/vrp-agent) — The autonomous portfolio agent (reference customer)
+- [`tradingdesk26/regimeshift-fx`](https://github.com/tradingdesk26/regimeshift-fx) — EURC/USDC Uniswap v4 hook where the same regime classifier was first calibrated
+
 ## Built for
 
 [Agora Agents Hackathon](https://thecanteenapp.com/) — Canteen × Circle.
