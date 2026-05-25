@@ -353,7 +353,7 @@ _SOFR_OUTPUT_SCHEMA = {
 }
 
 _SOFR_DISCOVERY = declare_discovery_extension(
-    input={},
+    input={"horizon": "1h"},  # ← non-empty so CDP's Bazaar accepts the query param schema
     output=OutputConfig(example=_SOFR_SAMPLE_OUTPUT, schema=_SOFR_OUTPUT_SCHEMA),
 )
 
@@ -411,7 +411,7 @@ _MAX_LTV_SCHEMA = {
 }
 
 _MAX_LTV_DISCOVERY = declare_discovery_extension(
-    input={},
+    input={"asset": "ETH", "duration_sec": 3600, "max_default_prob": 0.001},
     output=OutputConfig(example=_MAX_LTV_SAMPLE, schema=_MAX_LTV_SCHEMA),
 )
 
