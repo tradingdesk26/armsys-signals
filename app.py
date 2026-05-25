@@ -353,7 +353,15 @@ _SOFR_OUTPUT_SCHEMA = {
 }
 
 _SOFR_DISCOVERY = declare_discovery_extension(
-    input={"horizon": "1h"},  # ← non-empty so CDP's Bazaar accepts the query param schema
+    input={"horizon": "1h"},
+    input_schema={
+        "type": "object",
+        "properties": {
+            "horizon": {"type": "string", "description": "Rate horizon (e.g. 1h, 1d)", "enum": ["1h", "1d", "1w"]},
+        },
+        "required": [],
+        "additionalProperties": False,
+    },
     output=OutputConfig(example=_SOFR_SAMPLE_OUTPUT, schema=_SOFR_OUTPUT_SCHEMA),
 )
 
@@ -412,6 +420,16 @@ _MAX_LTV_SCHEMA = {
 
 _MAX_LTV_DISCOVERY = declare_discovery_extension(
     input={"asset": "ETH", "duration_sec": 3600, "max_default_prob": 0.001},
+    input_schema={
+        "type": "object",
+        "properties": {
+            "asset":            {"type": "string", "enum": ["ETH", "BTC"], "description": "Collateral asset"},
+            "duration_sec":     {"type": "integer", "minimum": 120, "maximum": 86400, "description": "Loan horizon in seconds"},
+            "max_default_prob": {"type": "number",  "minimum": 0,    "maximum": 0.01,  "description": "Lender's tolerated default probability"},
+        },
+        "required": [],
+        "additionalProperties": False,
+    },
     output=OutputConfig(example=_MAX_LTV_SAMPLE, schema=_MAX_LTV_SCHEMA),
 )
 
