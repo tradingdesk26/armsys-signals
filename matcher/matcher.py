@@ -100,6 +100,12 @@ class Matcher:
                 # Rate compat (lender's min ≤ borrower's max — clearable spread)
                 if lender.min_rate_bps > borrower.max_rate_bps:
                     continue
+                # Self-trade guard — refuse pairs where lender wallet == borrower wallet.
+                # An agent posting both sides shouldn't round-trip USDC to itself:
+                # zero economic outcome, only gas burn + misleading registry entries.
+                # Agents that genuinely want to play both roles should use two wallets.
+                if lender.wallet.lower() == borrower.wallet.lower():
+                    continue
 
                 # Try to build a quote at lender's min_rate (cheapest for borrower)
                 # using compute_collateral mode — this tells us collateral needed
