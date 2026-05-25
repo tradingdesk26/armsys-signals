@@ -21,7 +21,7 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
 from x402.http.facilitator_client_base import CreateHeadersAuthProvider
@@ -508,6 +508,89 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok", "uptime_sec": int(time.time() - _STARTED)}
+
+
+@app.get("/quickstart.txt", response_class=PlainTextResponse)
+def quickstart():
+    """Plain-text quickstart for x402 catalog browsers and AI agents."""
+    return """RegimeShift Clearinghouse — x402 Quickstart
+=============================================
+
+What this is
+------------
+Paid x402 data service + on-chain RFQ capital market for AI agents,
+live on Base mainnet. Agents pay tiny USDC amounts via x402 to read
+benchmark rates + risk parameters, then submit free intents to an
+order book where the matcher pairs them into atomic on-chain loans.
+
+Paid data endpoints (settle via x402)
+-------------------------------------
+GET  /v1/rate/sofr/usd?horizon=1h            $0.10  Agent-SOFR (decentralized USD short-rate benchmark, 7 sources + variance + regime premiums, BNS-calibrated)
+GET  /v1/risk/max-ltv?asset=ETH&...          $0.005 Max safe loan-to-value given variance + lender's default tolerance
+GET  /v1/asset/eth/vrp                       $0.005 ETH volatility risk premium (DVOL − Parkinson RV 72h)
+GET  /v1/asset/btc/vrp                       $0.005 BTC volatility risk premium
+
+Free endpoints (intent submission + chain reads)
+------------------------------------------------
+POST /v1/intent/lend                         Submit lender intent (rate, amount, max duration)
+POST /v1/intent/borrow                       Submit borrower intent (rate ceiling, principal, collateral)
+GET  /v1/intent/{id}/match?wait=300          Long-poll for match (holds up to 300s)
+GET  /v1/intents/open                        Current order book (both sides)
+GET  /v1/matches/recent                      Recent EIP-712 signed quotes ready for V4.originate()
+GET  /v1/loans/registry                      Full on-chain loan lifecycle (open / repaid / defaulted)
+GET  /v1/active-loans                        Currently active loans
+GET  /v1/liquidatable-loans                  Loans past LTV threshold (3% bounty)
+GET  /stats                                  Per-endpoint counters (402 vs 200)
+GET  /openapi.json                           Machine-readable API spec
+
+Network
+-------
+Base mainnet (eip155:8453)
+USDC settlement token: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+Pay to: 0x82B17D0bb4De9ae6c3491257B60E8245e70acd7B
+Active escrow contract: InterAgentRepoV4 0x9d3b61d13a839968ffad94a0eedf73153c2fb31c
+
+Facilitator
+-----------
+Two-tier: Coinbase CDP primary + self-hosted fallback. Drop-in for
+any x402 server — standalone repo: github.com/tradingdesk26/arc-x402-facilitator-failover
+
+How to pay (x402 SDK 2.x, Python)
+---------------------------------
+    from x402 import x402ClientSync
+    from x402.mechanisms.evm.exact import ExactEvmScheme
+    from x402.http.clients import x402_http_adapter
+    from eth_account import Account
+    import requests
+
+    acct   = Account.from_key("0xYOUR_PK")
+    client = x402ClientSync()
+    client.register("eip155:8453", ExactEvmScheme(signer=acct))
+    s = requests.Session()
+    s.mount("https://", x402_http_adapter(client))
+
+    r = s.get("https://regimeshift.xyz/api/v1/rate/sofr/usd?horizon=1h")
+    print(r.json())   # rate, decomposition, regime, sources, methodology
+
+Methodology (audited)
+---------------------
+agent-sofr-v1: Barndorff-Nielsen-Shephard jump decomposition, lambda=1.097
+closed-form on 444k 5-min bars of ETH/USDC. IPFS-pinned:
+https://regimeshift.xyz/methodology/agent-sofr-v1
+SHA-256 of the methodology page is included in every paid response so
+clients can verify the math hasn't moved.
+
+Code (all MIT, 6 public repos)
+------------------------------
+https://github.com/tradingdesk26/armsys-signals                  this API server + x402 paywall
+https://github.com/tradingdesk26/regimeshift-clearinghouse       InterAgentRepoV4 + audit reports + thesis docs
+https://github.com/tradingdesk26/regimeshift-agent-starter       4-role agent template (lender/borrower/liquidator/data-only)
+https://github.com/tradingdesk26/regimeshift-demo-activity       autonomous demo bot (3-wallet role separation)
+https://github.com/tradingdesk26/arc-x402-facilitator-failover   standalone two-tier facilitator (Arc OSS)
+https://github.com/tradingdesk26/regimeshift-website             landing + methodology pages
+
+Live dashboard: https://regimeshift.xyz
+"""
 
 
 @app.get("/stats")
