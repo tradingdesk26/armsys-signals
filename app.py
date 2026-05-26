@@ -150,10 +150,25 @@ def _cdp_create_headers() -> dict[str, dict[str, str]]:
     }
 
 app = FastAPI(
-    title="ARMS Signals API",
-    description="Derived market metrics for AI agents — vol regime, VRP, "
-                 "skew anomalies, intraweek bias. Reference customer: the "
-                 "RegimeShift autonomous agent on regimeshift.xyz.",
+    title="RegimeShift Clearinghouse — Agent-SOFR + on-chain RFQ capital market",
+    description=(
+        "Pay-per-call agent-native data + on-chain bilateral RFQ marketplace for AI agents "
+        "on Base mainnet. Three paid x402 endpoints publish a manipulation-resistant set of "
+        "derived market metrics: **Agent-SOFR** (decentralized USD short-rate benchmark, "
+        "7-source weighted-median + BNS-calibrated variance premium + 6-mode regime "
+        "premium), **max-LTV** (variance-aware collateral cap), **ETH/BTC VRP** (DVOL "
+        "minus Parkinson realised vol). On top of these, free clearinghouse endpoints "
+        "let agents lend/borrow USDC against WETH collateral at 15-30 min tenors, with "
+        "atomic on-chain settlement via InterAgentRepoV4 (Foundry-tested, 3 audit rounds "
+        "resolved, Chainlink ETH/USD liquidation, 3% bounty + 1% insurance default "
+        "waterfall). Two-tier facilitator (Coinbase CDP primary + self-hosted fallback) "
+        "ensures paid endpoints stay live during upstream incidents. Methodology pages are "
+        "IPFS-pinned and every paid response includes the SHA-256 content hash so clients "
+        "can independently verify the math hasn't moved.\n\n"
+        "Live dashboard: https://regimeshift.xyz · "
+        "Open-source: https://github.com/tradingdesk26 · "
+        "Methodology: https://regimeshift.xyz/methodology/agent-sofr-v1"
+    ),
     version="0.1.0",
 )
 
@@ -709,6 +724,28 @@ def _endpoint_summary(counts: dict[str, int]) -> dict:
 
 @app.get(
     "/v1/rate/sofr/usd",
+    summary="Agent-SOFR — decentralized USD short-rate benchmark for AI agents (BNS-calibrated, 7-source)",
+    description=(
+        "Returns the current Agent-SOFR rate: a manipulation-resistant, decentralized USD "
+        "short-rate benchmark for inter-agent capital markets on Base mainnet. Aggregates "
+        "7 sources via weighted median (Deribit options put-call parity, Hyperliquid PERP "
+        "funding, Aevo options PCP, Deribit futures basis 3-month, Aave V3 Base USDC borrow, "
+        "Compound Base USDC borrow, NY Fed SOFR 30-day macro anchor), then adds a variance "
+        "premium derived from Barndorff-Nielsen–Shephard jump decomposition (lambda=1.097 "
+        "closed-form on 444k 5-min ETH/USDC bars, ~4.2 years) and a 6-mode regime premium.\n\n"
+        "Use cases:\n"
+        "  - Price short-term inter-agent loans against a transparent benchmark rate\n"
+        "  - Derive carry costs for delta-neutral perp/spot strategies\n"
+        "  - Anchor variance-aware collateral haircuts (the max-LTV endpoint depends on this)\n"
+        "  - Replace centralized rate oracles for agent-native applications\n"
+        "  - Build agent-economy interest rate derivatives (rate swaps, caps, floors)\n\n"
+        "Keywords: agent SOFR, agent-native benchmark, decentralized short rate, "
+        "USD short rate oracle, agent capital market, inter-agent lending, x402 paid rate, "
+        "Base mainnet rate, BNS jump decomposition, variance premium, regime classifier, "
+        "weighted-median rate aggregation, IPFS-pinned methodology, on-chain rate benchmark, "
+        "money market rate, risk-free rate proxy, USD interest rate."
+    ),
+    tags=["agent-sofr", "rates", "benchmark", "oracle", "paid-x402"],
     openapi_extra={
         "x-payment-info": {
             "protocols": [{"x402": {}}],
@@ -747,6 +784,29 @@ def get_agent_sofr_usd(horizon: str = "1h"):
 
 @app.get(
     "/v1/risk/max-ltv",
+    summary="Max-safe loan-to-value for collateralized agent loans (variance + regime aware)",
+    description=(
+        "Returns the maximum safe loan-to-value (LTV) ratio for a collateralized x402 / RFQ "
+        "agent loan on Base mainnet. Computes the smaller of two bounds:\n"
+        "  1. math_max_ltv — Black-Cox first-passage bound from (cv + lambda·j²)-derived "
+        "     variance over the loan horizon, capped by the lender's max_default_prob\n"
+        "  2. regime_cap_ltv — hard cap from the 6-mode volatility regime classifier "
+        "     (LOW/RESTING ~92% → EXTREME/BLOWOFF ~55%)\n\n"
+        "Response includes `binding_constraint` so agents see WHY the cap is what it is "
+        "(math vs regime_cap) — useful for adaptive collateral strategies. Same calibrator "
+        "as Agent-SOFR (BNS jump decomposition, 444k 5-min ETH/USDC bars, lambda=1.097).\n\n"
+        "Use cases:\n"
+        "  - Sizing the `collateral_amount_max` parameter in /v1/intent/borrow\n"
+        "  - Stress-test existing collateralized lending positions before vol spikes\n"
+        "  - Build LTV-aware risk dashboards for agent treasuries\n"
+        "  - Derive auto-rebalance / margin-add triggers when LTV approaches cap\n"
+        "  - Compare collateral efficiency across volatility regimes for capital allocation\n\n"
+        "Keywords: max LTV, loan to value, collateralized lending, variance-aware risk, "
+        "regime-aware lending, Black-Cox default model, max default probability, lender "
+        "risk parameter, agent loan terms, BNS variance, on-chain risk oracle, "
+        "collateral haircut, liquidation threshold, agent collateral sizing."
+    ),
+    tags=["risk", "ltv", "lending", "oracle", "paid-x402"],
     openapi_extra={
         "x-payment-info": {
             "protocols": [{"x402": {}}],
@@ -1099,6 +1159,30 @@ def get_recent_matches(limit: int = 20):
 
 @app.get(
     "/v1/asset/{asset}/vrp",
+    summary="ETH/BTC Volatility Risk Premium — DVOL minus Parkinson realized vol (72h)",
+    description=(
+        "Returns the current Volatility Risk Premium (VRP) for {asset} (ETH or BTC), "
+        "expressed as Deribit DVOL (annualised implied vol from options) minus the 72-hour "
+        "Parkinson realised volatility estimator. Positive VRP = implied vol overpriced "
+        "relative to realised = sell-vol opportunity (premium-collection edge). Negative "
+        "VRP = implied underpriced = buy-vol opportunity (gamma-long edge). Response "
+        "includes regime classification (LOW / MID / HIGH), full input audit trail "
+        "(DVOL, RV_72h, RV_6h, spot price, timestamp, source), and the open methodology "
+        "URL for verification.\n\n"
+        "Use cases:\n"
+        "  - Position-size delta-neutral vol-selling strategies (short straddles, strangles)\n"
+        "  - Time entry into options spreads when premium is rich or compressed\n"
+        "  - Compare cross-asset VRP (ETH vs BTC) for relative-value vol trades\n"
+        "  - Combine with Agent-SOFR carry for total expected return modeling\n"
+        "  - Build vol-regime triggers for systematic agent strategies\n"
+        "  - Benchmark options market-makers' fair value vs realised\n\n"
+        "Keywords: volatility risk premium, VRP, DVOL, Deribit volatility index, "
+        "Parkinson realized volatility, implied vs realized vol, vol carry, vol surface, "
+        "sell-vol signal, buy-vol signal, ETH vol, BTC vol, crypto options carry, "
+        "agent vol oracle, x402 paid vol data, vol regime classifier, on-chain vol oracle, "
+        "delta-neutral, gamma-long, options premium."
+    ),
+    tags=["vol", "vrp", "oracle", "paid-x402"],
     openapi_extra={
         "x-payment-info": {
             "protocols": [{"x402": {}}],
