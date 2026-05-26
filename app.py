@@ -177,7 +177,7 @@ def _custom_openapi():
     schema = _orig_openapi()
     schema["info"]["x-guidance"] = (
         "Pay-per-call data + on-chain RFQ capital market for AI agents on Base "
-        "mainnet. Agents pay $0.005-$0.10 USDC via x402 to read Agent-SOFR "
+        "mainnet. Agents pay $0.001 USDC via x402 to read Agent-SOFR "
         "(decentralized USD short-rate benchmark), max-LTV (variance-aware loan "
         "terms), or ETH/BTC volatility risk premium. Free clearinghouse endpoints "
         "let agents lend/borrow USDC vs WETH at 15-30 min tenors with atomic "
@@ -349,7 +349,7 @@ def _vrp_route(asset: str) -> RouteConfig:
             PaymentOption(
                 scheme="exact",
                 pay_to=EVM_ADDRESS,
-                price="$0.005",
+                price="$0.001",
                 network=EVM_NETWORK,
             ),
         ],
@@ -423,7 +423,7 @@ def _sofr_route(asset: str) -> RouteConfig:
             PaymentOption(
                 scheme="exact",
                 pay_to=EVM_ADDRESS,
-                price="$0.10",
+                price="$0.001",
                 network=EVM_NETWORK,
             ),
         ],
@@ -491,7 +491,7 @@ def _max_ltv_route() -> RouteConfig:
             PaymentOption(
                 scheme="exact",
                 pay_to=EVM_ADDRESS,
-                price="$0.005",
+                price="$0.001",
                 network=EVM_NETWORK,
             ),
         ],
@@ -565,10 +565,11 @@ def root():
             "pay_to":     EVM_ADDRESS,
             "facilitator": FACILITATOR_URL,
             "pricing": {
-                "VRP (ETH/BTC)":           "$0.005",
-                "Agent-SOFR USD":          "$0.10",
-                "Max-LTV risk":            "$0.005",
+                "VRP (ETH/BTC)":           "$0.001",
+                "Agent-SOFR USD":          "$0.001",
+                "Max-LTV risk":            "$0.001",
                 "Quote (signed, future)":  "$0.05 flat or 5 bps of principal",
+                "_note":                    "Endpoint prices kept at $0.001 to minimize friction for new agents during onboarding. Revenue base is loan-interest spread + V4 liquidation bounty (3% of defaulted collateral), not endpoint micro-payments.",
             },
         },
     }
@@ -594,10 +595,14 @@ order book where the matcher pairs them into atomic on-chain loans.
 
 Paid data endpoints (settle via x402)
 -------------------------------------
-GET  /v1/rate/sofr/usd?horizon=1h            $0.10  Agent-SOFR (decentralized USD short-rate benchmark, 7 sources + variance + regime premiums, BNS-calibrated)
-GET  /v1/risk/max-ltv?asset=ETH&...          $0.005 Max safe loan-to-value given variance + lender's default tolerance
-GET  /v1/asset/eth/vrp                       $0.005 ETH volatility risk premium (DVOL − Parkinson RV 72h)
-GET  /v1/asset/btc/vrp                       $0.005 BTC volatility risk premium
+GET  /v1/rate/sofr/usd?horizon=1h            $0.001 Agent-SOFR (decentralized USD short-rate benchmark, 7 sources + variance + regime premiums, BNS-calibrated)
+GET  /v1/risk/max-ltv?asset=ETH&...          $0.001 Max safe loan-to-value given variance + lender's default tolerance
+GET  /v1/asset/eth/vrp                       $0.001 ETH volatility risk premium (DVOL − Parkinson RV 72h)
+GET  /v1/asset/btc/vrp                       $0.001 BTC volatility risk premium
+
+Prices held at $0.001 during onboarding — primary revenue base is loan-interest
+spread + V4 liquidation bounty (3% of defaulted collateral), not endpoint micro-
+payments. Will revisit pricing once external paying-agent traffic stabilizes.
 
 Free endpoints (intent submission + chain reads)
 ------------------------------------------------
@@ -707,11 +712,11 @@ def _endpoint_summary(counts: dict[str, int]) -> dict:
     openapi_extra={
         "x-payment-info": {
             "protocols": [{"x402": {}}],
-            "price": {"mode": "fixed", "currency": "USD", "amount": "0.10"},
+            "price": {"mode": "fixed", "currency": "USD", "amount": "0.001"},
         },
         "responses": {
             "402": {
-                "description": "Payment required. Sign EIP-3009 USDC authorization for $0.10 via x402; resend with X-Payment header.",
+                "description": "Payment required. Sign EIP-3009 USDC authorization for $0.001 via x402; resend with X-Payment header.",
                 "headers": {
                     "payment-required": {
                         "schema": {"type": "string"},
@@ -745,11 +750,11 @@ def get_agent_sofr_usd(horizon: str = "1h"):
     openapi_extra={
         "x-payment-info": {
             "protocols": [{"x402": {}}],
-            "price": {"mode": "fixed", "currency": "USD", "amount": "0.005"},
+            "price": {"mode": "fixed", "currency": "USD", "amount": "0.001"},
         },
         "responses": {
             "402": {
-                "description": "Payment required. Sign EIP-3009 USDC authorization for $0.005 via x402.",
+                "description": "Payment required. Sign EIP-3009 USDC authorization for $0.001 via x402.",
                 "headers": {
                     "payment-required": {"schema": {"type": "string"}},
                 },
@@ -1025,11 +1030,11 @@ def get_recent_matches(limit: int = 20):
     openapi_extra={
         "x-payment-info": {
             "protocols": [{"x402": {}}],
-            "price": {"mode": "fixed", "currency": "USD", "amount": "0.005"},
+            "price": {"mode": "fixed", "currency": "USD", "amount": "0.001"},
         },
         "responses": {
             "402": {
-                "description": "Payment required. Sign EIP-3009 USDC authorization for $0.005 via x402.",
+                "description": "Payment required. Sign EIP-3009 USDC authorization for $0.001 via x402.",
                 "headers": {
                     "payment-required": {"schema": {"type": "string"}},
                 },

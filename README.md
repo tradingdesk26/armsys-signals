@@ -36,12 +36,12 @@ Public base URL: `https://regimeshift.xyz/api/`
 
 | Path | Price | Description |
 |------|-------|-------------|
-| `GET /v1/asset/eth/vrp` | **$0.005** | ETH Volatility Risk Premium (DVOL − Parkinson RV 72h) |
-| `GET /v1/asset/btc/vrp` | **$0.005** | BTC Volatility Risk Premium |
-| `GET /v1/rate/sofr/usd?horizon=1h` | **$0.10** | Agent-SOFR USD short rate (multi-source weighted median + variance + regime premium). Messari Enterprise tier — unique product, no equivalent elsewhere. |
-| `GET /v1/risk/max-ltv?asset=ETH&duration_sec=3600&max_default_prob=0.001` | **$0.005** | Max-safe LTV for collateralized loans (math max + regime cap) |
+| `GET /v1/asset/eth/vrp` | **$0.001** | ETH Volatility Risk Premium (DVOL − Parkinson RV 72h) |
+| `GET /v1/asset/btc/vrp` | **$0.001** | BTC Volatility Risk Premium |
+| `GET /v1/rate/sofr/usd?horizon=1h` | **$0.001** | Agent-SOFR USD short rate (multi-source weighted median + variance + regime premium) |
+| `GET /v1/risk/max-ltv?asset=ETH&duration_sec=3600&max_default_prob=0.001` | **$0.001** | Max-safe LTV for collateralized loans (math max + regime cap) |
 
-Pricing rationale: VRP and max-LTV are commodity signal endpoints competitive with CoinMarketCap pro tier ($0.005). Agent-SOFR is a category-defining product — the only on-chain decentralized USD benchmark rate aggregated from 8 manipulation-resistant sources — priced at Messari Enterprise tier ($0.10) accordingly. Signed loan quotes (forthcoming) will be the highest tier at flat $0.05 floor or 5 bps of principal, whichever larger.
+Pricing rationale (onboarding phase): all paid endpoints kept at **$0.001 per call** — the minimum amount agents will probe at when evaluating an unknown service. Friction-free for new agents to test our quality before relying on the data. Our primary revenue base is **loan-interest spread** in the clearinghouse (base + variance + regime premium, take ~5-10 bps) plus the **3% liquidator bounty** on `V4.defaultLoan()` — not endpoint micro-payments. Endpoint prices will be revisited once external paying-agent traffic stabilizes; eventual tier targets: VRP / max-LTV at CoinMarketCap-pro level ($0.005), Agent-SOFR at Messari-Enterprise tier ($0.10), signed loan quotes at $0.05 floor or 5 bps of principal.
 
 ### Inter-Agent Clearinghouse (free; settlement on-chain)
 
@@ -406,14 +406,14 @@ matcher/                     Intent book (SQLite) + matcher + quote engine (EIP-
 - ✅ Methodology pages on `regimeshift.xyz/methodology/*` with IPFS pinning + SHA-256 in every API response
 - ✅ Compound borrow rate read — live in aggregator
 - ✅ BNS jump decomposition + λ=1.097 closed-form calibration on 444k bars
-- ✅ Autonomous demo bot (D pays $0.10 USDC every 90 min for fresh SOFR — agents using our own data via x402)
+- ✅ Autonomous demo bot (D pays $0.001 USDC every 90 min for fresh SOFR — agents using our own data via x402)
 - ⬜ `/v1/rate/sofr/{eur,eth}` — EUR + ETH rate variants
 - ⬜ Multi-asset principal/collateral (V4 is USDC/WETH-only)
 
 ## Related repos
 
 - [`tradingdesk26/regimeshift-clearinghouse`](https://github.com/tradingdesk26/regimeshift-clearinghouse) — InterAgentRepoV4 escrow contracts + audit rounds + thesis docs
-- [`tradingdesk26/regimeshift-demo-activity`](https://github.com/tradingdesk26/regimeshift-demo-activity) — Autonomous bot that exercises these endpoints continuously; pays $0.10 USDC for Agent-SOFR every refresh via the paid x402 path
+- [`tradingdesk26/regimeshift-demo-activity`](https://github.com/tradingdesk26/regimeshift-demo-activity) — Autonomous bot that exercises these endpoints continuously; pays $0.001 USDC for Agent-SOFR every refresh via the paid x402 path
 - [`tradingdesk26/regimeshift-agent-starter`](https://github.com/tradingdesk26/regimeshift-agent-starter) — Minimal starter kit (lender / borrower / liquidator / data-only roles) for new agents integrating against this API
 - [`tradingdesk26/vrp-agent`](https://github.com/tradingdesk26/vrp-agent) — The autonomous portfolio agent (reference customer)
 - [`tradingdesk26/regimeshift-fx`](https://github.com/tradingdesk26/regimeshift-fx) — EURC/USDC Uniswap v4 hook where the same regime classifier was first calibrated
