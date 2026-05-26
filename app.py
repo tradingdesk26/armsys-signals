@@ -798,7 +798,41 @@ def get_max_ltv(
 
 # ─── Inter-Agent Clearinghouse endpoints (free; settlement on-chain) ──
 
-@app.post("/v1/intent/lend")
+@app.post(
+    "/v1/intent/lend",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "title": "LenderIntent",
+                        "required": ["wallet", "asset", "amount", "max_duration_sec", "min_rate_bps"],
+                        "properties": {
+                            "wallet":           {"type": "string", "pattern": "^0x[a-fA-F0-9]{40}$", "description": "EVM address (checksum or lowercase) of the lender wallet that will fund the loan principal on-chain"},
+                            "asset":            {"type": "string", "enum": ["USDC"], "description": "Principal asset (USDC only in v1)"},
+                            "amount":           {"type": "number", "exclusiveMinimum": 0, "description": "Principal amount to lend, in USDC (e.g. 50.0 = $50)"},
+                            "max_duration_sec": {"type": "integer", "minimum": 120, "maximum": 86400, "description": "Maximum loan duration the lender will commit to (120s - 24h)"},
+                            "min_rate_bps":     {"type": "integer", "minimum": 0, "maximum": 10000, "description": "Minimum acceptable rate in basis points (1% = 100 bps)"},
+                            "max_default_prob": {"type": "number", "minimum": 0, "maximum": 0.01, "default": 0.001, "description": "Maximum acceptable default probability — caps max-LTV regime, lower = safer collateral demand"},
+                            "webhook_url":      {"type": "string", "format": "uri", "description": "(optional) Server POSTs full signed-quote payload to this URL within ~1s of match. Best-effort, no retries. Handler must be idempotent on match_id."},
+                        },
+                        "example": {
+                            "wallet":           "0x9C08414234cf959Cd7d83F50dC5E904515C6e221",
+                            "asset":            "USDC",
+                            "amount":           50.0,
+                            "max_duration_sec": 1800,
+                            "min_rate_bps":     480,
+                            "max_default_prob": 0.001,
+                            "webhook_url":      "https://my-agent.example/x402/match-callback",
+                        },
+                    }
+                }
+            }
+        }
+    },
+)
 async def post_intent_lend(payload: dict):
     """
     Submit a lender intent to the order book. Free (matching runs synchronously
@@ -822,8 +856,46 @@ async def post_intent_lend(payload: dict):
     })
 
 
-@app.post("/v1/intent/borrow")
-async def post_intent_borrow(payload: dict):
+@app.post(
+    "/v1/intent/borrow",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "title": "BorrowerIntent",
+                        "required": ["wallet", "principal_asset", "principal_amount",
+                                       "collateral_asset", "collateral_amount_max",
+                                       "duration_sec", "max_rate_bps"],
+                        "properties": {
+                            "wallet":                {"type": "string", "pattern": "^0x[a-fA-F0-9]{40}$", "description": "EVM address of the borrower wallet — must hold the collateral + approve V4 to pull it"},
+                            "principal_asset":       {"type": "string", "enum": ["USDC"], "description": "Asset borrower wants to receive (USDC only in v1)"},
+                            "principal_amount":      {"type": "number", "exclusiveMinimum": 0, "description": "Principal amount to borrow in USDC"},
+                            "collateral_asset":      {"type": "string", "enum": ["WETH"], "description": "Collateral asset (WETH only in v1)"},
+                            "collateral_amount_max": {"type": "number", "exclusiveMinimum": 0, "description": "Maximum WETH the borrower is willing to lock as collateral. Matcher will lock the MINIMUM amount the live regime requires (e.g. ~88% LTV in LOW regime, ~55% LTV in EXTREME) — your max is the ceiling, not the target."},
+                            "duration_sec":          {"type": "integer", "minimum": 120, "maximum": 86400, "description": "Loan duration in seconds (120s - 24h)"},
+                            "max_rate_bps":          {"type": "integer", "minimum": 0, "maximum": 10000, "description": "Maximum acceptable rate in basis points (1% = 100 bps)"},
+                            "webhook_url":           {"type": "string", "format": "uri", "description": "(optional) Server POSTs full signed-quote payload to this URL within ~1s of match"},
+                        },
+                        "example": {
+                            "wallet":                "0xA44Df66E7e0c5ED31BcA87C3a5b71D2F0F00C2BB",
+                            "principal_asset":       "USDC",
+                            "principal_amount":      50.0,
+                            "collateral_asset":      "WETH",
+                            "collateral_amount_max": 0.030,
+                            "duration_sec":          1200,
+                            "max_rate_bps":          650,
+                            "webhook_url":           "https://my-agent.example/x402/match-callback",
+                        },
+                    }
+                }
+            }
+        }
+    },
+)
+async def post_intent_borrow(payload: dict):  # see decorator above for explicit schema  # noqa
     """Submit a borrower intent. Returns match_id if compatible lender found."""
     required = ["wallet", "principal_asset", "principal_amount",
                 "collateral_asset", "collateral_amount_max",
