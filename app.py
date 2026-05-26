@@ -157,6 +157,57 @@ app = FastAPI(
     version="0.1.0",
 )
 
+
+# ─── Inject AgentCash-discovery-compatible OpenAPI extensions ─────────
+#
+# AgentCash + Bazaar quality checkers look at /openapi.json for:
+#   info.x-guidance — high-level agent-friendly description of what the API
+#                     does + how to use it (1 paragraph, no boilerplate)
+#   paths.*.<verb>.x-payment-info — per-operation pricing + protocols
+#                                   (added inline via openapi_extra= on each
+#                                    paid route decorator)
+# We override app.openapi() so we can add x-guidance + servers at the
+# absolute URL (so agents combining base + path get the right full URL
+# regardless of which endpoint they crawled openapi.json from).
+_orig_openapi = app.openapi
+
+def _custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = _orig_openapi()
+    schema["info"]["x-guidance"] = (
+        "Pay-per-call data + on-chain RFQ capital market for AI agents on Base "
+        "mainnet. Agents pay $0.005-$0.10 USDC via x402 to read Agent-SOFR "
+        "(decentralized USD short-rate benchmark), max-LTV (variance-aware loan "
+        "terms), or ETH/BTC volatility risk premium. Free clearinghouse endpoints "
+        "let agents lend/borrow USDC vs WETH at 15-30 min tenors with atomic "
+        "on-chain settlement (InterAgentRepoV4, Foundry-tested, 3 audit rounds "
+        "resolved). Two-tier facilitator (Coinbase CDP primary + self-hosted "
+        "fallback) — every paid 200 is a real USDC.transferWithAuthorization tx "
+        "visible on BaseScan. Methodology IPFS-pinned with SHA-256 in every "
+        "response."
+    )
+    # Absolute server URL — so this spec is usable served at root or at /api
+    schema["servers"] = [{"url": "https://regimeshift.xyz/api"}]
+    # AgentCash discovery validator (L2/L3 audit) wants every operation to
+    # explicitly declare its auth mode. Per their CLI hints:
+    #   - Paid routes: x-payment-info present (we add this via openapi_extra=)
+    #   - Free routes: `security: []` (empty array) marks as explicitly public
+    # We inject the empty security array on every operation that lacks
+    # x-payment-info — this is the canonical "this endpoint is free" marker
+    # per OpenAPI 3.x spec.
+    for path, ops in schema.get("paths", {}).items():
+        for verb, op in ops.items():
+            if verb not in ("get", "post", "put", "patch", "delete"):
+                continue
+            if "x-payment-info" not in op:
+                # free endpoint — mark as explicitly public
+                op["security"] = []
+    app.openapi_schema = schema
+    return schema
+
+app.openapi = _custom_openapi
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -651,7 +702,26 @@ def _endpoint_summary(counts: dict[str, int]) -> dict:
     return out
 
 
-@app.get("/v1/rate/sofr/usd")
+@app.get(
+    "/v1/rate/sofr/usd",
+    openapi_extra={
+        "x-payment-info": {
+            "protocols": [{"x402": {}}],
+            "price": {"mode": "fixed", "currency": "USD", "amount": "0.10"},
+        },
+        "responses": {
+            "402": {
+                "description": "Payment required. Sign EIP-3009 USDC authorization for $0.10 via x402; resend with X-Payment header.",
+                "headers": {
+                    "payment-required": {
+                        "schema": {"type": "string"},
+                        "description": "Base64-encoded x402 payment challenge (resource, accepts, extensions.bazaar info+schema).",
+                    }
+                },
+            },
+        },
+    },
+)
 def get_agent_sofr_usd(horizon: str = "1h"):
     """
     Agent-SOFR — decentralized USD short-rate benchmark for AI agents.
@@ -670,7 +740,23 @@ def get_agent_sofr_usd(horizon: str = "1h"):
     return JSONResponse(snap.to_dict())
 
 
-@app.get("/v1/risk/max-ltv")
+@app.get(
+    "/v1/risk/max-ltv",
+    openapi_extra={
+        "x-payment-info": {
+            "protocols": [{"x402": {}}],
+            "price": {"mode": "fixed", "currency": "USD", "amount": "0.005"},
+        },
+        "responses": {
+            "402": {
+                "description": "Payment required. Sign EIP-3009 USDC authorization for $0.005 via x402.",
+                "headers": {
+                    "payment-required": {"schema": {"type": "string"}},
+                },
+            },
+        },
+    },
+)
 def get_max_ltv(
     asset: str = "ETH",
     duration_sec: int = 3600,
@@ -934,7 +1020,23 @@ def get_recent_matches(limit: int = 20):
     return {"ok": True, "matches": out}
 
 
-@app.get("/v1/asset/{asset}/vrp")
+@app.get(
+    "/v1/asset/{asset}/vrp",
+    openapi_extra={
+        "x-payment-info": {
+            "protocols": [{"x402": {}}],
+            "price": {"mode": "fixed", "currency": "USD", "amount": "0.005"},
+        },
+        "responses": {
+            "402": {
+                "description": "Payment required. Sign EIP-3009 USDC authorization for $0.005 via x402.",
+                "headers": {
+                    "payment-required": {"schema": {"type": "string"}},
+                },
+            },
+        },
+    },
+)
 def get_vrp(asset: Literal["eth", "btc", "ETH", "BTC"]):
     """Volatility Risk Premium = DVOL (annualised) − Parkinson RV(72h).
 
