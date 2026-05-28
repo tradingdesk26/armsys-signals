@@ -1081,18 +1081,46 @@ def get_loan_registry(limit: int = 50):
 
 
 @app.get("/v1/intent/{intent_id}/match")
-async def long_poll_intent_match(intent_id: str, wait: int = 60):
+async def long_poll_intent_match(
+    intent_id: str,
+    wait: int = 180,
+    stream: bool = False,
+):
     """
-    Long-poll: returns immediately if intent is already matched, otherwise
-    holds the connection up to `wait` seconds (max 300) and returns as soon
-    as a match is found. Use for agents that don't have a public webhook URL.
+    Long-poll for a match on an open intent. Two response modes:
 
-    Response:
-      - matched=true + match_id + full quote when matched
-      - matched=false + timeout_sec when wait elapses without match
-      - 404 if intent_id unknown
+    Mode 1 (default, `stream=false`) — single JSON response:
+      GET /v1/intent/lend_abc/match?wait=180
+      Returns one of:
+        {ok:true, matched:true,  match_id, quote, elapsed_sec}
+        {ok:true, matched:false, timeout_sec, elapsed_sec, hint}
+
+    Mode 2 (`stream=true`) — newline-delimited JSON (application/x-ndjson):
+      GET /v1/intent/lend_abc/match?wait=180&stream=true
+      Yields:
+        {"event":"waiting", "elapsed_sec":25.0}     ← heartbeat every 25s
+        {"event":"waiting", "elapsed_sec":50.0}
+        ...
+        {"event":"matched", "match_id", "quote", "elapsed_sec":67.3}   OR
+        {"event":"timeout", "timeout_sec", "elapsed_sec":180.0}
+
+    Streaming mode emits a heartbeat every 25s so aggressive idle-timeout
+    proxies (CDNs, mobile networks, corporate egress) don't kill the
+    connection mid-wait. Use it when wait > ~60 and you can't control
+    the proxy chain between your agent and our server.
+
+    `wait` default 180s (well under our nginx 310s limit), max 300s. Cap
+    is intentional — TCP idle limits on CDN/mobile typically kill
+    connections beyond ~5 min, so longer polls are silently dangerous.
+
+    If you have a public HTTPS endpoint that can accept POSTs, prefer
+    `webhook_url` at intent submission instead — push delivery, no
+    timeouts, instant. Long-poll is the fallback for agents without
+    public endpoints (local scripts, behind NAT, etc.).
     """
     import asyncio
+    import json as _json
+
     book = _get_intent_book()
 
     # Validate intent exists
@@ -1102,38 +1130,88 @@ async def long_poll_intent_match(intent_id: str, wait: int = 60):
 
     wait = max(0, min(wait, 300))
     start = time.time()
-    poll_interval = 1.0
     deadline = start + wait
+    poll_interval = 1.0
+    heartbeat_every = 25.0
 
-    while True:
-        match = book.find_match_for_intent(intent_id)
-        if match is not None:
-            import json as _json
-            try:
-                quote = _json.loads(match["quote_payload"])
-            except Exception:
-                quote = None
-            return JSONResponse({
-                "ok": True,
-                "intent_id": intent_id,
-                "matched": True,
-                "match_id": match["match_id"],
-                "quote": quote,
-                "elapsed_sec": round(time.time() - start, 2),
-            })
+    # ─── Mode 1: single JSON response (default) ──────────────────────
+    if not stream:
+        while True:
+            match = book.find_match_for_intent(intent_id)
+            if match is not None:
+                try:
+                    quote = _json.loads(match["quote_payload"])
+                except Exception:
+                    quote = None
+                return JSONResponse({
+                    "ok": True,
+                    "intent_id": intent_id,
+                    "matched": True,
+                    "match_id": match["match_id"],
+                    "quote": quote,
+                    "elapsed_sec": round(time.time() - start, 2),
+                })
 
-        # If wait=0 or deadline reached, return matched=false
-        if time.time() >= deadline:
-            return JSONResponse({
-                "ok": True,
-                "intent_id": intent_id,
-                "matched": False,
-                "timeout_sec": wait,
-                "elapsed_sec": round(time.time() - start, 2),
-                "hint": "Re-poll with the same intent_id, or submit with webhook_url for push notifications.",
-            })
+            if time.time() >= deadline:
+                return JSONResponse({
+                    "ok": True,
+                    "intent_id": intent_id,
+                    "matched": False,
+                    "timeout_sec": wait,
+                    "elapsed_sec": round(time.time() - start, 2),
+                    "hint": "Re-poll with the same intent_id, submit with webhook_url for push delivery, or use ?stream=true for heartbeat-keepalive NDJSON.",
+                })
 
-        await asyncio.sleep(poll_interval)
+            await asyncio.sleep(poll_interval)
+
+    # ─── Mode 2: NDJSON streaming with periodic heartbeats ──────────
+    from fastapi.responses import StreamingResponse
+
+    async def event_stream():
+        last_heartbeat = start
+        while True:
+            match = book.find_match_for_intent(intent_id)
+            if match is not None:
+                try:
+                    quote = _json.loads(match["quote_payload"])
+                except Exception:
+                    quote = None
+                yield _json.dumps({
+                    "event":       "matched",
+                    "intent_id":   intent_id,
+                    "match_id":    match["match_id"],
+                    "quote":       quote,
+                    "elapsed_sec": round(time.time() - start, 2),
+                }) + "\n"
+                return
+
+            now = time.time()
+            if now >= deadline:
+                yield _json.dumps({
+                    "event":       "timeout",
+                    "intent_id":   intent_id,
+                    "timeout_sec": wait,
+                    "elapsed_sec": round(now - start, 2),
+                    "hint":        "Re-poll with same intent_id, or submit with webhook_url for push delivery.",
+                }) + "\n"
+                return
+
+            # Heartbeat every 25s — resets proxy idle timer
+            if now - last_heartbeat >= heartbeat_every:
+                yield _json.dumps({
+                    "event":       "waiting",
+                    "intent_id":   intent_id,
+                    "elapsed_sec": round(now - start, 2),
+                }) + "\n"
+                last_heartbeat = now
+
+            await asyncio.sleep(poll_interval)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/v1/matches/recent")
