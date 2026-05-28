@@ -36,6 +36,10 @@ from oracle.calibration import REGIME_MAX_LTV
 #
 # Set INTERNAL_WALLETS env var: comma-separated 0x-prefixed addresses.
 # When unset, falls back to the per-pair self-trade guard only.
+#
+# Lazy-cached: app.py runs load_dotenv() AFTER importing this module, so we
+# must defer reading the env until first use (i.e., first find_match call).
+# Read-once and cached — a service restart re-runs the lazy init.
 def _load_internal_wallets() -> set[str]:
     raw = os.getenv("INTERNAL_WALLETS", "")
     out: set[str] = set()
@@ -46,7 +50,14 @@ def _load_internal_wallets() -> set[str]:
     return out
 
 
-_INTERNAL_WALLETS: set[str] = _load_internal_wallets()
+_INTERNAL_WALLETS_CACHE: Optional[set[str]] = None
+
+
+def _get_internal_wallets() -> set[str]:
+    global _INTERNAL_WALLETS_CACHE
+    if _INTERNAL_WALLETS_CACHE is None:
+        _INTERNAL_WALLETS_CACHE = _load_internal_wallets()
+    return _INTERNAL_WALLETS_CACHE
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,9 +145,10 @@ class Matcher:
                 # where D's quoter matches against B/C instead of an external taker.
                 # Mixed pairs (operator ↔ external) ARE allowed — that's the whole point
                 # of D-quoter: provide a real maker side to external takers.
-                if _INTERNAL_WALLETS and \
-                   lender.wallet.lower() in _INTERNAL_WALLETS and \
-                   borrower.wallet.lower() in _INTERNAL_WALLETS:
+                _internal = _get_internal_wallets()
+                if _internal and \
+                   lender.wallet.lower() in _internal and \
+                   borrower.wallet.lower() in _internal:
                     # Allow B↔C demo cross by checking the lender_wallet is exactly D.
                     # If D appears on EITHER side, require the other side to be external.
                     # B↔C pairs (no D) → allow (existing demo activity preserves liveness).
