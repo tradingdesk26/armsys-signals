@@ -145,7 +145,10 @@ class Matcher:
                         continue
 
                 # Try to build a quote at lender's min_rate (cheapest for borrower)
-                # using compute_collateral mode — this tells us collateral needed
+                # using compute_collateral mode — this tells us collateral needed.
+                # NOTE: compute_collateral now floor-clamps when rate < SOFR floor —
+                # the returned quote.rate_bps may be HIGHER than lender.min_rate_bps.
+                # We recheck against borrower.max_rate_bps below before matching.
                 try:
                     quote = self.engine.compute_collateral(
                         principal_amount_usd=borrower.principal_amount,
@@ -158,9 +161,16 @@ class Matcher:
                         collateral_price_usd=collateral_price_usd,
                     )
                 except ValueError as e:
-                    # Rate too low to clear premium → try next pair
-                    # If we wanted to be smarter, we'd retry at the borrower's max_rate
-                    # (giving them less collateral relief), but MVP: skip
+                    # Should be rare now — floor-clamp absorbs the most common
+                    # "below floor" case. Remaining ValueErrors are real (e.g.
+                    # principal too small to round to non-zero raw units).
+                    continue
+
+                # Floor-clamp may have bumped the clearing rate above lender's
+                # min — re-verify it's still ≤ borrower's max. Without this
+                # check, a 480bps lender could be matched to a 600bps borrower
+                # at a clearing rate of 700bps, exceeding the borrower's cap.
+                if quote.rate_bps > borrower.max_rate_bps:
                     continue
 
                 # Convert quoted collateral to human units for comparison

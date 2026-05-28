@@ -318,12 +318,23 @@ class QuoteEngine:
         base_anchor = sofr_snap.base_anchor_pct
 
         # Required variance_premium (bps) = target_rate - base - regime - take
+        floor_bps = int(round(base_anchor * 100)) + int(round(regime_premium_bps)) + int(round(ORCHESTRATOR_TAKE_BPS))
         target_premium_bps = target_rate_bps - int(base_anchor * 100) - regime_premium_bps - ORCHESTRATOR_TAKE_BPS
+
+        # Floor-clamp: if lender posted at a rate below the SOFR+regime+take floor
+        # (e.g. they wanted 480bps but regime moved up and floor is now 544bps),
+        # we DON'T refuse — we bump the clearing rate up to the floor. Semantically
+        # the lender intent is "≥min_rate", so getting MORE than they asked for is
+        # consistent. The borrower still pays ≤ their max_rate (matcher checks that
+        # at the pair-compat step), and the loan is now properly compensated for
+        # default-risk under current regime.
+        rate_bumped_from_bps: Optional[int] = None
         if target_premium_bps < 0:
-            raise ValueError(
-                f"Target rate {target_rate_bps} bps below floor "
-                f"(base {base_anchor:.2f}% + regime {regime_premium_bps:.1f}bps + take {ORCHESTRATOR_TAKE_BPS:.1f}bps)"
-            )
+            rate_bumped_from_bps = target_rate_bps
+            target_rate_bps = floor_bps
+            target_premium_bps = 0.0  # exactly at floor — variance premium is zero
+            # We'll let the borrower's max_rate check downstream guard against
+            # bumps that exceed what the borrower will accept (in matcher.py).
 
         # Numerical inversion: find LTV that produces target_premium
         ltv = self._invert_premium_to_ltv(target_premium_bps, sigma_T, duration_sec)
