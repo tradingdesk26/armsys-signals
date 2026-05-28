@@ -16,10 +16,12 @@ within that window or re-quote.
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import secrets
 import time
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
@@ -118,6 +120,20 @@ QUOTE_VALIDITY_SECONDS: int = 60
 ORCHESTRATOR_TAKE_BPS: float = 5.0       # 5 bps over fair rate (matcher fee)
 DEFAULT_QUOTE_LTV: float = 0.80           # Used by compute_rate when LTV not specified
 
+# Chainlink ETH/USD on Base — same feed the V4 contract reads. Fetching this on
+# the matcher side (instead of using a hardcoded $2080 fallback) keeps LTV in
+# the quote consistent with what the contract will compute at originate time.
+CHAINLINK_ETH_USD_BASE: str = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70"
+ETH_PRICE_CACHE_SECONDS: int = 25        # cache so each find_match doesn't spam RPC
+# Conservative bias on the live price — matcher computes collateral using
+# (1 - PRICE_SAFETY_BPS/10000) × Chainlink. This over-collateralizes by a
+# small margin so a 0.5% price drop between matcher tick and originate tick
+# doesn't break LTV cap (initial LTV cap = LIQUIDATION_LTV - 200bps buffer = 93%).
+PRICE_SAFETY_BPS: int = 50               # 0.50% conservative discount
+# Hard fallback if Chainlink RPC fails. Better to refuse than to use a wildly
+# stale value — but for stability we still pin a sane default.
+ETH_PRICE_FALLBACK_USD: float = 2000.0
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EIP-712 typed data
@@ -179,10 +195,58 @@ class QuoteEngine:
             )
         self._oracle = Account.from_key(pk)
         self._classifier = RegimeClassifier()
+        self._eth_price_cache: tuple[float, float] = (0.0, 0.0)  # (price, fetched_at)
 
     @property
     def oracle_address(self) -> str:
         return self._oracle.address
+
+    # ─── Chainlink ETH/USD ──────────────────────────────────────────────────
+
+    def _fetch_live_eth_usd(self) -> float:
+        """Read ETH/USD from the same Chainlink feed the V4 contract uses.
+
+        Cached for ETH_PRICE_CACHE_SECONDS so a burst of find_match cycles
+        doesn't hammer the RPC. If the call fails, falls through to a sane
+        default (logged via stderr) — the matcher continues operating but
+        with stale price, accepting the risk that some quotes might be
+        rejected on-chain via InitialLtvTooHigh.
+        """
+        now = time.time()
+        cached_price, cached_at = self._eth_price_cache
+        if now - cached_at < ETH_PRICE_CACHE_SECONDS and cached_price > 0:
+            return cached_price
+
+        rpc = os.getenv("RPC_URL", "https://base-mainnet.g.alchemy.com/v2/C1ASgXsGxtYR0ilEB6wIy")
+        try:
+            req = urllib.request.Request(
+                rpc,
+                data=json.dumps({
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "eth_call",
+                    "params": [{"to": CHAINLINK_ETH_USD_BASE, "data": "0xfeaf968c"}, "latest"],
+                }).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                body = json.loads(resp.read())
+            data = body["result"][2:]  # strip 0x
+            # latestRoundData(): (roundId, answer, startedAt, updatedAt, answeredInRound)
+            # Each field is 32 bytes (64 hex). `answer` is int256 at offset 64..128.
+            answer = int(data[64:128], 16)
+            price = answer / 1e8  # Chainlink ETH/USD has 8 decimals
+            if not (500 < price < 100000):
+                raise ValueError(f"sanity check failed: {price=}")
+            # Apply conservative safety discount so we slightly over-collateralize
+            safe_price = price * (1.0 - PRICE_SAFETY_BPS / 10_000)
+            self._eth_price_cache = (safe_price, now)
+            return safe_price
+        except Exception as e:
+            import sys
+            print(f"[QuoteEngine] Chainlink ETH/USD fetch failed: {type(e).__name__}: {e}; "
+                  f"using fallback ${ETH_PRICE_FALLBACK_USD}", file=sys.stderr, flush=True)
+            self._eth_price_cache = (ETH_PRICE_FALLBACK_USD, now)
+            return ETH_PRICE_FALLBACK_USD
 
     # ─── Public API ─────────────────────────────────────────────────────────
 
@@ -195,11 +259,13 @@ class QuoteEngine:
         lender: str,
         principal_asset: str = "USDC",
         collateral_asset: str = "WETH",
-        collateral_price_usd: float = 2080.0,  # current spot
+        collateral_price_usd: Optional[float] = None,  # None → live Chainlink
     ) -> SignedQuote:
         """
         Mode 1: given (principal, collateral, duration) → output (rate, signed quote).
         """
+        if collateral_price_usd is None:
+            collateral_price_usd = self._fetch_live_eth_usd()
         variance, regime = self._fresh_state()
         ltv = principal_amount_usd / collateral_amount_usd
         if ltv > 1.0:
@@ -236,12 +302,14 @@ class QuoteEngine:
         lender: str,
         principal_asset: str = "USDC",
         collateral_asset: str = "WETH",
-        collateral_price_usd: float = 2080.0,
+        collateral_price_usd: Optional[float] = None,  # None → live Chainlink
     ) -> SignedQuote:
         """
         Mode 2: given (principal, rate, duration) → output (required collateral, signed quote).
         Numerical inversion: find LTV such that quoted rate == target.
         """
+        if collateral_price_usd is None:
+            collateral_price_usd = self._fetch_live_eth_usd()
         variance, regime = self._fresh_state()
         sigma_T = variance.sigma_over_horizon(duration_sec)
         regime_premium_bps = self._regime_premium_bps(regime)
@@ -289,11 +357,13 @@ class QuoteEngine:
         lender: str,
         principal_asset: str = "USDC",
         collateral_asset: str = "WETH",
-        collateral_price_usd: float = 2080.0,
+        collateral_price_usd: Optional[float] = None,  # None → live Chainlink
     ) -> SignedQuote:
         """
         Mode 3: given (principal, collateral, rate) → output (max safe T, signed quote).
         """
+        if collateral_price_usd is None:
+            collateral_price_usd = self._fetch_live_eth_usd()
         variance, regime = self._fresh_state()
         ltv = principal_amount_usd / collateral_amount_usd
         if ltv > REGIME_MAX_LTV[regime]:
