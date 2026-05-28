@@ -15,6 +15,7 @@ Algorithm:
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import urllib.request
@@ -25,6 +26,27 @@ from matcher.intent_book import (
 )
 from matcher.quote_engine import QuoteEngine, SignedQuote
 from oracle.calibration import REGIME_MAX_LTV
+
+
+# ─── Internal operator wallets (demo activity + D quoter) ────────────────────
+# When BOTH sides of a candidate match are wallets the operator controls
+# (A oracle / B+C executors / D data-buyer-quoter), we skip — these would
+# just round-trip USDC across our own wallets with zero economic benefit
+# and clutter the public Loan Registry with non-organic flow.
+#
+# Set INTERNAL_WALLETS env var: comma-separated 0x-prefixed addresses.
+# When unset, falls back to the per-pair self-trade guard only.
+def _load_internal_wallets() -> set[str]:
+    raw = os.getenv("INTERNAL_WALLETS", "")
+    out: set[str] = set()
+    for w in raw.split(","):
+        w = w.strip().lower()
+        if w.startswith("0x") and len(w) == 42:
+            out.add(w)
+    return out
+
+
+_INTERNAL_WALLETS: set[str] = _load_internal_wallets()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -106,6 +128,21 @@ class Matcher:
                 # Agents that genuinely want to play both roles should use two wallets.
                 if lender.wallet.lower() == borrower.wallet.lower():
                     continue
+                # Internal-cross guard — refuse pairs where BOTH wallets are operator
+                # wallets we control (B/C executors + D quoter). The demo activity bot
+                # already pairs B↔C deliberately; this only blocks the unintended case
+                # where D's quoter matches against B/C instead of an external taker.
+                # Mixed pairs (operator ↔ external) ARE allowed — that's the whole point
+                # of D-quoter: provide a real maker side to external takers.
+                if _INTERNAL_WALLETS and \
+                   lender.wallet.lower() in _INTERNAL_WALLETS and \
+                   borrower.wallet.lower() in _INTERNAL_WALLETS:
+                    # Allow B↔C demo cross by checking the lender_wallet is exactly D.
+                    # If D appears on EITHER side, require the other side to be external.
+                    # B↔C pairs (no D) → allow (existing demo activity preserves liveness).
+                    d_addr = os.getenv("WALLET_D_ADDR", "").lower()
+                    if d_addr and (lender.wallet.lower() == d_addr or borrower.wallet.lower() == d_addr):
+                        continue
 
                 # Try to build a quote at lender's min_rate (cheapest for borrower)
                 # using compute_collateral mode — this tells us collateral needed
