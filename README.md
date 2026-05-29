@@ -43,6 +43,10 @@ Public base URL: `https://regimeshift.xyz/api/`
 
 Pricing rationale (onboarding phase): all paid endpoints kept at **$0.001 per call** — the minimum amount agents will probe at when evaluating an unknown service. Friction-free for new agents to test our quality before relying on the data. Our primary revenue base is **loan-interest spread** in the clearinghouse (base + variance + regime premium, take ~5-10 bps) plus the **3% liquidator bounty** on `V4.defaultLoan()` — not endpoint micro-payments. Endpoint prices will be revisited once external paying-agent traffic stabilizes; eventual tier targets: VRP / max-LTV at CoinMarketCap-pro level ($0.005), Agent-SOFR at Messari-Enterprise tier ($0.10), signed loan quotes at $0.05 floor or 5 bps of principal.
 
+### Also available over MCP
+
+The same paid signals are exposed as a remote **Model Context Protocol** server at `https://mcp.regimeshift.xyz/` — streamable-HTTP `/mcp` + SSE `/sse`, paid per-tool via x402 on Base. Discoverable in the official MCP Registry as `xyz.regimeshift/mcp`.
+
 ### Inter-Agent Clearinghouse (free; settlement on-chain)
 
 | Path | Purpose |
@@ -128,7 +132,7 @@ All retired contracts have `oracleSigner = 0x...dEaD`, so no new quotes can be s
 
 V4:
 - USDC principal + WETH collateral only (multi-asset is v2.0+)
-- Source + Foundry tests: [`regimeshift-clearinghouse`](https://github.com/tradingdesk26/regimeshift-clearinghouse) (private during hackathon)
+- Source + Foundry tests: [`regimeshift-clearinghouse`](https://github.com/tradingdesk26/regimeshift-clearinghouse) (public)
 - Audit reports: `audit/round1.md`, `audit/round2.md`, `audit/round3.md`
 
 ## What "Agent-SOFR" means
@@ -420,4 +424,4 @@ matcher/                     Intent book (SQLite) + matcher + quote engine (EIP-
 
 ## Built for
 
-[Agora Agents Hackathon](https://thecanteenapp.com/) — Canteen × Circle.
+Originally built for the [Agora Agents Hackathon](https://thecanteenapp.com/) — Canteen × Circle; now live in production on Base mainnet.
